@@ -17,6 +17,10 @@ class ProjectInterface(object):
     def version(self):
         raise NotImplementedError()
 
+    @property
+    def dependencies(self):
+        raise NotImplementedError()
+
     # TODO: Identify the specific parts of the metadata required by clients
     #  and break this up.
     @property
@@ -28,6 +32,10 @@ class ProjectInterface(object):
         calling prepare_metadata_for_build_wheel) then it should be cached.
         """
         raise NotImplementedError()
+
+    @property
+    def installed(self):
+        return False
 
     def is_compatible(self, state):
         # type: (...) -> bool
