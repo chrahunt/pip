@@ -1,15 +1,26 @@
 import os
+import sys
 from collections import namedtuple
+from contextlib import contextmanager
+
+from pip._vendor import six
+from pip._vendor.pep517.wrappers import Pep517HookCaller
 
 from pip._internal.download import unpack_file_url
 from pip._internal.projects.base import BaseProject
-from pip._internal.pyproject import load_pyproject_toml
+from pip._internal.pyproject import load_pyproject_toml, make_pyproject_path
+from pip._internal.utils.misc import (
+    cached_property,
+    call_subprocess,
+    ensure_dir,
+)
 from pip._internal.utils.temp_dir import TempDirectory
 from pip._internal.utils.typing import MYPY_CHECK_RUNNING
+from pip._internal.utils.ui import open_spinner
 from pip._internal.wheel import Wheel
 
 if MYPY_CHECK_RUNNING:
-    from typing import Dict, List, Optional, Tuple
+    from typing import Any, Dict, List, Mapping, Optional, Tuple
 
     from pip._internal.projects.config import ProjectConfig
     from pip._internal.projects.services import ProjectServices
@@ -58,20 +69,33 @@ class LocalArchive(ProjectWithContext):
 
     def __next__(self):
         # type: () -> BaseProject
-        # TODO: Unpack the archive and return UnpackedSources.
-        # TODO: Determine how an archive, as an unnamed requirement,
-        #  currently provides a name for the pyproject_toml?
-        #  - it doesn't provide a name, it provides an identifier which is
-        #    only used for logging purposes.
+        temp_dir = TempDirectory(kind="unpack")
+        temp_dir.create()
+        unpack_file_url(self._link, temp_dir.path)
+        return UnpackedSources(self, temp_dir.path, str(self._link))
+
+
+class LocalEditableDirectory(ProjectWithContext):
+    def __init__(self, ctx, link):
+        # type: (ProjectContextProvider, Link) -> None
+        super(LocalEditableDirectory, self).__init__(ctx)
+        self._link = link
+
+    def __next__(self):
+        # type: () -> BaseProject
+        # TODO: Verifications and then return LocalEditableLegacy.
         ...
 
 
-class LocalEditableDirectory(BaseProject):
-    pass
+class LocalEditableLegacy(ProjectWithContext):
+    def __init__(self, ctx, link):
+        super(LocalEditableLegacy, self).__init__(ctx)
+        self._link = link
 
-
-class LocalEditableLegacy(BaseProject):
-    pass
+    def install(self, scheme):
+        # type: (Dict) -> None
+        # TODO: i.e. InstallRequirement.install_editable
+        ...
 
 
 class LocalEditableNamedVcs(BaseProject):
@@ -94,7 +118,7 @@ class LocalLegacyProject(ProjectWithContext):
         # TODO: Derive from metadata.
         return
 
-    @property
+    @cached_property
     def metadata(self):
         # TODO: Call egg_info (req.req_install.InstallRequirement.run_egg_info)
         return
@@ -108,8 +132,34 @@ class LocalLegacyProject(ProjectWithContext):
     def __next__(self):
         # type: () -> BaseProject
         # TODO: If wheel is installed, build wheel
-        # TODO: If that fails, or wheel is not installed,
+        # TODO: If that fails, or wheel is not installed, then install directly.
         ...
+
+
+class Pep517BackendHolder(object):
+    def __init__(self, backend):
+        # type: (Pep517HookCaller) -> None
+        self._backend = backend
+
+    @contextmanager
+    def backend_operation(self, spin_message):
+        # type: (str) -> Pep517HookCaller
+        def runner(
+            cmd,  # type: List[str]
+            cwd=None,  # type: Optional[str]
+            extra_environ=None  # type: Optional[Mapping[str, Any]]
+        ):
+            # type: (...) -> None
+            with open_spinner(spin_message) as spinner:
+                call_subprocess(
+                    cmd,
+                    cwd=cwd,
+                    extra_environ=extra_environ,
+                    spinner=spinner
+                )
+
+        with self._backend.subprocess_runner(runner):
+            yield self._backend
 
 
 class LocalModernProject(ProjectWithContext):
@@ -122,20 +172,32 @@ class LocalModernProject(ProjectWithContext):
         # type: (...) -> None
         super(LocalModernProject, self).__init__(ctx)
         self._source_directory = source_directory
-        # TODO: Populate like the rest of InstallRequirement.load_pyproject_toml
+        requires, backend, check = pyproject_toml_data
+        self._requirements_to_check = check
+        self._pyproject_requires = requires
+        self._pep517_backend = Pep517HookCaller(
+            self._source_directory, backend,
+        )
+        self._pep517_backend_holder = Pep517BackendHolder(self._pep517_backend)
 
     @property
     def metadata(self):
-        # TODO: if prepare_metadata_for_build_wheel is not implemented,
-        #  raise NotImplementedError().
-        # TODO: call prepare_metadata_for_build_wheel (
-        #  req.req_install.InstallRequirement.prepare_pep517_metadata)
-        # TODO: cache result
-        return
+        # XXX: We may be able to avoid building a wheel here if the backend
+        #  implements `prepare_metadata_for_build_wheel`, but per
+        #  pypa/pep517#58, there is not a way to NOT build the wheel if the
+        #  hook does not exist. For consistency we will always build the wheel.
+        # XXX: Once the issue above is fixed we should try to invoke the hook
+        #  and provide the metadata if possible.
+        raise NotImplementedError()
 
     def __next__(self):
-        # TODO: Build project into wheel
-        return LocalWheel(self)
+        # TODO:
+        #  1. Create build environment
+        #     (distributions.source.legacy.SourceDistribution
+        #      .prepare_distribution_metadata)
+        #  2. Do wheel build (wheel.WheelBuilder._build_one_pep517)
+        #  3. Return LocalWheel
+        return
 
 
 class LocalNamedVcs(BaseProject):
@@ -148,27 +210,31 @@ class LocalNonEditableDirectory(BaseProject):
         self._source_directory = source_directory
 
 
-class LocalSdist(BaseProject):
+class LocalSdist(ProjectWithContext):
     def __init__(self, ctx, path):
         super(LocalSdist, self).__init__(ctx)
         self._path = path
 
     @property
     def name(self):
-        return
+        # XXX: Could derive from link, see pypa/pip#1689.
+        raise NotImplementedError()
 
     @property
     def version(self):
-        return
+        # XXX: Could derive from link, see pypa/pip#1689.
+        raise NotImplementedError()
 
     def save_sdist(self):
         # TODO: Copy sdist to provided directory.
-        pass
+        raise NotImplementedError()
 
     def __next__(self):
         # type: () -> BaseProject
-        # TODO: Unpack into a temporary unpacked source directory.
-        ...
+        temp_dir = TempDirectory(kind="unpack")
+        temp_dir.create()
+        unpack_file_url(self._path, temp_dir.path)
+        return UnpackedSources(self, temp_dir.path, str(self._path))
 
 
 class LocalUnnamedVcs(BaseProject):
@@ -298,33 +364,62 @@ class RemoteWheel(ProjectWithContext):
 class UnpackedSources(ProjectWithContext):
     def __init__(
         self,
-        ctx,  # type: ProjectContextProvider
-        source_directory,  # type: str,
-        name=None,  # type: Optional[str]
+        ctx,               # type: ProjectContextProvider
+        source_directory,  # type: str
+        source,            # type: str
+        name=None,         # type: Optional[str]
+        version=None,      # type: Optional[str]
     ):
         # type: (...) -> None
+        """
+        :param ctx: project context
+        :param source_directory: the root of the unpacked project
+            (which contains a setup.py or pyproject.toml)
+        :param source: identifier for the origin of the requirement, for error
+            reporting
+        :param name: the official name of the requirement, if already
+            determined
+        :param version: the official version of the requirement, if already
+            determined
+        """
         super(UnpackedSources, self).__init__(ctx)
         self._source_directory = source_directory
+        self._source = source
         self._name = name
+        self._version = version
 
     @property
     def name(self):
+        # type: () -> str
         # We came from an unnamed requirement.
         if self._name is None:
             raise NotImplementedError()
         return self._name
 
     @property
-    def _pyproject_toml_path(self):
+    def version(self):
         # type: () -> str
-        # TODO: i.e. InstallRequirement.pyproject_toml_path
-        return ''
+        if self._version is None:
+            raise NotImplementedError()
+        return self._version
 
     @property
+    def _pyproject_toml_path(self):
+        # type: () -> str
+        return make_pyproject_path(self._source_directory)
+
+    @cached_property
     def _setup_py_path(self):
         # type: () -> str
-        # TODO: i.e. InstallRequirement.setup_py_path
-        return ''
+        # i.e. InstallRequirement.setup_py_path but without the complication
+        # of editable VCS requirements (with subdirectory)
+        path = os.path.join(self._source_directory, 'setup.py')
+
+        # Python2 __file__ should not be unicode
+        if six.PY2 and isinstance(path, six.text_type):
+            path = path.encode(sys.getfilesystemencoding())
+
+        return path
 
     def __next__(self):
         # type: () -> BaseProject
@@ -333,7 +428,7 @@ class UnpackedSources(ProjectWithContext):
             self.config.use_pep517,
             self._pyproject_toml_path,
             self._setup_py_path,
-            self.name
+            self._source,
         )
 
         if pyproject_toml_data is None:

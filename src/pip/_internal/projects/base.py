@@ -1,24 +1,26 @@
 from pip._internal.utils.typing import MYPY_CHECK_RUNNING
 
 if MYPY_CHECK_RUNNING:
-    from typing import Dict
+    from typing import Dict, List
 
 
 class ProjectInterface(object):
     @property
     def name(self):
+        # type: () -> str
         """
         Name of the project.
-        :return: str
         """
         raise NotImplementedError()
 
     @property
     def version(self):
+        # type: () -> str
         raise NotImplementedError()
 
     @property
     def dependencies(self):
+        # type: () -> List[str]
         raise NotImplementedError()
 
     # TODO: Identify the specific parts of the metadata required by clients

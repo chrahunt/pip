@@ -1,5 +1,4 @@
 from pip._internal.projects.base import ProjectInterface
-
 from pip._internal.utils.typing import MYPY_CHECK_RUNNING
 
 if MYPY_CHECK_RUNNING:
@@ -21,6 +20,14 @@ class ProxyProject(ProjectInterface):
         except NotImplementedError:
             self._advance()
         return self.name
+
+    @property
+    def dependencies(self):
+        try:
+            return self._project.dependencies
+        except NotImplementedError:
+            self._advance()
+        return self.dependencies
 
     @property
     def version(self):
