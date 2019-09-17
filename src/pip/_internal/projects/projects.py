@@ -125,6 +125,8 @@ class LocalLegacyProject(ProjectWithContext):
 
     def install(self, scheme):
         # type: (Dict) -> None
+        # TODO:
+        #  1. If wheel is installed, try to build a wheel
         # TODO: How to organize this so that it will fail with
         #  NotImplementedError if a wheel build would succeed?
         pass
@@ -391,7 +393,7 @@ class UnpackedSources(ProjectWithContext):
     @property
     def name(self):
         # type: () -> str
-        # We came from an unnamed requirement.
+        # i.e. we came from an unnamed requirement.
         if self._name is None:
             raise NotImplementedError()
         return self._name
