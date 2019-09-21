@@ -73,6 +73,8 @@ class ProjectInterface(object):
 
 
 class BaseProject(ProjectInterface):
-    def __next__(self):
+    def prepare(self):
         # type: () -> BaseProject
+        """Prepare the project for the next stage of processing.
+        """
         ...

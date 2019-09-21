@@ -20,7 +20,7 @@ from pip._internal.utils.ui import open_spinner
 from pip._internal.wheel import Wheel
 
 if MYPY_CHECK_RUNNING:
-    from typing import Any, Dict, List, Mapping, Optional, Tuple
+    from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
     from pip._internal.projects.config import ProjectConfig
     from pip._internal.projects.services import ProjectServices
@@ -28,6 +28,9 @@ if MYPY_CHECK_RUNNING:
 
 
 class ProjectContextProvider(object):
+    """
+    Propagate config and services from one project to the next.
+    """
     def __init__(self, source):
         # type: (ProjectContextProvider) -> None
         super(ProjectContextProvider, self).__init__()
@@ -67,8 +70,8 @@ class LocalArchive(ProjectWithContext):
         super(LocalArchive, self).__init__(ctx)
         self._link = link
 
-    def __next__(self):
-        # type: () -> BaseProject
+    def prepare(self):
+        # type: () -> UnpackedSources
         temp_dir = TempDirectory(kind="unpack")
         temp_dir.create()
         unpack_file_url(self._link, temp_dir.path)
@@ -81,8 +84,8 @@ class LocalEditableDirectory(ProjectWithContext):
         super(LocalEditableDirectory, self).__init__(ctx)
         self._link = link
 
-    def __next__(self):
-        # type: () -> BaseProject
+    def prepare(self):
+        # type: () -> LocalEditableLegacy
         # TODO: Verifications and then return LocalEditableLegacy.
         ...
 
@@ -131,7 +134,7 @@ class LocalLegacyProject(ProjectWithContext):
         #  NotImplementedError if a wheel build would succeed?
         pass
 
-    def __next__(self):
+    def prepare(self):
         # type: () -> BaseProject
         # TODO: If wheel is installed, build wheel
         # TODO: If that fails, or wheel is not installed, then install directly.
@@ -192,14 +195,15 @@ class LocalModernProject(ProjectWithContext):
         #  and provide the metadata if possible.
         raise NotImplementedError()
 
-    def __next__(self):
+    def prepare(self):
+        # type: () -> LocalWheel
         # TODO:
         #  1. Create build environment
         #     (distributions.source.legacy.SourceDistribution
         #      .prepare_distribution_metadata)
         #  2. Do wheel build (wheel.WheelBuilder._build_one_pep517)
         #  3. Return LocalWheel
-        return
+        ...
 
 
 class LocalNamedVcs(BaseProject):
@@ -231,8 +235,8 @@ class LocalSdist(ProjectWithContext):
         # TODO: Copy sdist to provided directory.
         raise NotImplementedError()
 
-    def __next__(self):
-        # type: () -> BaseProject
+    def prepare(self):
+        # type: () -> UnpackedSources
         temp_dir = TempDirectory(kind="unpack")
         temp_dir.create()
         unpack_file_url(self._path, temp_dir.path)
@@ -277,7 +281,8 @@ class LocalWheel(ProjectWithContext):
         # type: (...) -> bool
         pass
 
-    def __next__(self):
+    def prepare(self):
+        # type: () -> UnpackedWheel
         """
         Unpacks to UnpackedWheel.
         """
@@ -295,7 +300,8 @@ class RemoteArchive(ProjectWithContext):
         super(RemoteArchive, self).__init__(ctx)
         self._link = link
 
-    def __next__(self):
+    def prepare(self):
+        # type: () -> LocalArchive
         downloaded = download(self.services.download, self._link)
         return LocalArchive(self, Link(downloaded))
 
@@ -324,7 +330,8 @@ class RemoteSdist(ProjectWithContext):
         # XXX: Could derive from link, see pypa/pip#1689.
         raise NotImplementedError()
 
-    def __next__(self):
+    def prepare(self):
+        # type: () -> LocalSdist
         downloaded = download(self.services.download, self._link)
         return LocalSdist(self, Link(downloaded))
 
@@ -355,8 +362,8 @@ class RemoteWheel(ProjectWithContext):
         #  so the wheel is downloaded.
         raise NotImplementedError()
 
-    def __next__(self):
-        # type: () -> BaseProject
+    def prepare(self):
+        # type: () -> LocalWheel
         temp_dir = TempDirectory(kind="download")
         output_path = os.path.join(temp_dir.path, self._link.filename)
         self.services.download(self._link, output_path)
@@ -423,8 +430,8 @@ class UnpackedSources(ProjectWithContext):
 
         return path
 
-    def __next__(self):
-        # type: () -> BaseProject
+    def prepare(self):
+        # type: () -> Union[LocalLegacyProject, LocalModernProject]
         # From: InstallRequirement.load_pyproject_toml
         pyproject_toml_data = load_pyproject_toml(
             self.config.use_pep517,

@@ -18,7 +18,7 @@ class ProxyProject(ProjectInterface):
         try:
             return self._project.name
         except NotImplementedError:
-            self._advance()
+            self._prepare()
         return self.name
 
     @property
@@ -26,7 +26,7 @@ class ProxyProject(ProjectInterface):
         try:
             return self._project.dependencies
         except NotImplementedError:
-            self._advance()
+            self._prepare()
         return self.dependencies
 
     @property
@@ -34,7 +34,7 @@ class ProxyProject(ProjectInterface):
         try:
             return self._project.version
         except NotImplementedError:
-            self._advance()
+            self._prepare()
         return self.version
 
     @property
@@ -42,36 +42,36 @@ class ProxyProject(ProjectInterface):
         try:
             return self._project.metadata
         except NotImplementedError:
-            self._advance()
+            self._prepare()
         return self.metadata
 
     def install(self, scheme):
         try:
             return self._project.install(scheme)
         except NotImplementedError:
-            self._advance()
+            self._prepare()
         return self.install(scheme)
 
     def uninstall(self):
         try:
             return self._project.uninstall()
         except NotImplementedError:
-            self._advance()
+            self._prepare()
         return self.uninstall()
 
     def save_sdist(self):
         try:
             return self._project.save_sdist()
         except NotImplementedError:
-            self._advance()
+            self._prepare()
         return self.save_sdist()
 
     def save_wheel(self):
         try:
             return self._project.save_wheel()
         except NotImplementedError:
-            self._advance()
+            self._prepare()
         return self.save_wheel()
 
-    def _advance(self):
-        self._project = next(self._project)
+    def _prepare(self):
+        self._project = self._project.prepare()
