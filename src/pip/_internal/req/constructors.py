@@ -302,14 +302,7 @@ def parse_req_from_line(name, line_source):
         if not markers_as_string:
             markers = None
         else:
-            markers = markers.strip()
-            if not markers:
-                markers = None
-            else:
-                markers = Marker(markers)
-        return name.strip(), markers
-
-    name, markers = split_name_and_markers(name)
+            markers = Marker(markers_as_string)
 
     def normalize_file_link(link):
         # type: (Link) -> Link
