@@ -5,9 +5,22 @@ from contextlib import contextmanager
 
 from pip._vendor import six
 from pip._vendor.pep517.wrappers import Pep517HookCaller
+from pip._vendor.packaging.requirements import Requirement
 
 from pip._internal.download import unpack_file_url
 from pip._internal.projects.base import BaseProject
+from pip._internal.projects.registry import input_project
+from pip._internal.projects.traits import (
+    archive,
+    directory,
+    editable,
+    local,
+    named,
+    remote,
+    unnamed,
+    vcs,
+    wheel,
+)
 from pip._internal.pyproject import load_pyproject_toml, make_pyproject_path
 from pip._internal.utils.misc import (
     cached_property,
@@ -25,6 +38,7 @@ if MYPY_CHECK_RUNNING:
     from pip._internal.projects.config import ProjectConfig
     from pip._internal.projects.services import ProjectServices
     from pip._internal.models.link import Link
+    from pip._internal.models.requirement import ParsedRequirement
 
 
 class ProjectContextProvider(object):
@@ -64,6 +78,7 @@ def download(downloader, source):
     return output_path
 
 
+@input_project(local, archive)
 class LocalArchive(ProjectWithContext):
     def __init__(self, ctx, link):
         # type: (ProjectContextProvider, Link) -> None
@@ -78,53 +93,114 @@ class LocalArchive(ProjectWithContext):
         return UnpackedSources(self, temp_dir.path, str(self._link))
 
 
+@input_project(local, editable, directory)
 class LocalEditableDirectory(ProjectWithContext):
     def __init__(self, ctx, link):
         # type: (ProjectContextProvider, Link) -> None
         super(LocalEditableDirectory, self).__init__(ctx)
         self._link = link
 
+    @classmethod
+    def from_req(cls, req):
+        # type: (ParsedRequirement) -> LocalEditableDirectory
+        raise NotImplementedError('TODO')
+
     def prepare(self):
         # type: () -> LocalEditableLegacy
         # TODO: Verifications and then return LocalEditableLegacy.
-        ...
+        raise NotImplementedError('TODO')
 
 
 class LocalEditableLegacy(ProjectWithContext):
-    def __init__(self, ctx, link):
+    def __init__(
+        self,
+        ctx,  # type: ProjectContextProvider
+        link,  # type: Link
+        req=None,  # type: Optional[Requirement]
+    ):
+        # type: (...) -> None
         super(LocalEditableLegacy, self).__init__(ctx)
         self._link = link
+        self._req = req
+
+    @property
+    def name(self):
+        # type: () -> str
+        # TODO: Derive from metadata
+        raise NotImplementedError('TODO')
+
+    @property
+    def version(self):
+        # type: () -> str
+        # TODO: Derive from metadata
+        raise NotImplementedError('TODO')
+
+    @property
+    def dependencies(self):
+        # type: () -> List[str]
+        # TODO: Derive from metadata
+        raise NotImplementedError('TODO')
 
     def install(self, scheme):
         # type: (Dict) -> None
         # TODO: i.e. InstallRequirement.install_editable
-        ...
+        raise NotImplementedError('TODO')
 
 
-class LocalEditableNamedVcs(BaseProject):
-    pass
+@input_project(local, editable, named, vcs)
+class LocalEditableNamedVcs(ProjectWithContext):
+    def __init__(self, ctx, link, req):
+        # type: (ProjectContextProvider, Link, Requirement) -> None
+        super(LocalEditableNamedVcs, self).__init__(ctx)
+        self._link = link
+        self._req = req
+
+    @property
+    def name(self):
+        # type: () -> str
+        return self._req.name
+
+    def prepare(self):
+        # type: () -> LocalEditableLegacy
+        path = self._link.file_path
+        # TODO: Handle subdirectory.
+        setup_py_path = os.path.join(path, "setup.py")
+        if not os.path.exists(setup_py_path):
+            # TODO: More granular error.
+            raise RuntimeError(
+                "{} is not an editable project".format(
+                    self._link.url,
+                )
+            )
+        return LocalEditableLegacy(self, self._link, self._req)
 
 
 class LocalLegacyProject(ProjectWithContext):
-    def __init__(self, ctx, source_directory):
-        # type: (ProjectContextProvider, str) -> None
+    def __init__(
+        self,
+        ctx,  # type: ProjectContextProvider
+        source_directory,  # type: str
+        req,  # type: Requirement
+    ):
+        # type: (...) -> None
         super(LocalLegacyProject, self).__init__(ctx)
         self._source_directory = source_directory
+        self._req = req
 
     @property
     def name(self):
         # TODO: Derive from metadata.
-        return
+        raise NotImplementedError('TODO')
 
     @property
     def version(self):
         # TODO: Derive from metadata.
-        return
+        raise NotImplementedError('TODO')
 
     @cached_property
     def metadata(self):
         # TODO: Call egg_info (req.req_install.InstallRequirement.run_egg_info)
-        return
+        raise NotImplementedError('TODO')
 
     def install(self, scheme):
         # type: (Dict) -> None
@@ -132,13 +208,13 @@ class LocalLegacyProject(ProjectWithContext):
         #  1. If wheel is installed, try to build a wheel
         # TODO: How to organize this so that it will fail with
         #  NotImplementedError if a wheel build would succeed?
-        pass
+        raise NotImplementedError('TODO')
 
     def prepare(self):
         # type: () -> BaseProject
         # TODO: If wheel is installed, build wheel
         # TODO: If that fails, or wheel is not installed, then install directly.
-        ...
+        raise NotImplementedError('TODO')
 
 
 class Pep517BackendHolder(object):
@@ -203,14 +279,18 @@ class LocalModernProject(ProjectWithContext):
         #      .prepare_distribution_metadata)
         #  2. Do wheel build (wheel.WheelBuilder._build_one_pep517)
         #  3. Return LocalWheel
-        ...
+        raise NotImplementedError('TODO')
 
 
-class LocalNamedVcs(BaseProject):
-    pass
+@input_project(local, named, vcs)
+class LocalNamedVcs(ProjectWithContext):
+    def __init__(self, ctx, source_directory):
+        super(LocalNamedVcs, self).__init__(ctx)
+        self._source_directory = source_directory
 
 
-class LocalNonEditableDirectory(BaseProject):
+@input_project(local, directory)
+class LocalNonEditableDirectory(ProjectWithContext):
     def __init__(self, ctx, source_directory):
         super(LocalNonEditableDirectory, self).__init__(ctx)
         self._source_directory = source_directory
@@ -233,7 +313,7 @@ class LocalSdist(ProjectWithContext):
 
     def save_sdist(self):
         # TODO: Copy sdist to provided directory.
-        raise NotImplementedError()
+        raise NotImplementedError('TODO')
 
     def prepare(self):
         # type: () -> UnpackedSources
@@ -243,8 +323,12 @@ class LocalSdist(ProjectWithContext):
         return UnpackedSources(self, temp_dir.path, str(self._path))
 
 
-class LocalUnnamedVcs(BaseProject):
-    pass
+@input_project(local, unnamed, vcs)
+class LocalUnnamedVcs(ProjectWithContext):
+    def __init__(self, ctx):
+        # type: (ProjectContextProvider) -> None
+        super(LocalUnnamedVcs, self).__init__(ctx)
+        raise NotImplementedError('TODO')
 
 
 class LocalWheel(ProjectWithContext):
@@ -279,7 +363,7 @@ class LocalWheel(ProjectWithContext):
 
     def is_compatible(self, state):
         # type: (...) -> bool
-        pass
+        raise NotImplementedError('TODO')
 
     def prepare(self):
         # type: () -> UnpackedWheel
@@ -294,6 +378,7 @@ class LocalWheel(ProjectWithContext):
         return UnpackedWheel(self, source_dir.path)
 
 
+@input_project(remote, archive)
 class RemoteArchive(ProjectWithContext):
     def __init__(self, ctx, link):
         # type: (ProjectContextProvider, Link) -> None
@@ -306,12 +391,18 @@ class RemoteArchive(ProjectWithContext):
         return LocalArchive(self, Link(downloaded))
 
 
-class RemoteEditableNamedVcs(BaseProject):
-    pass
+@input_project(remote, editable, named, vcs)
+class RemoteEditableNamedVcs(ProjectWithContext):
+    def __init__(self, ctx):
+        # type: (ProjectContextProvider) -> None
+        super(RemoteEditableNamedVcs, self).__init__(ctx)
 
 
-class RemoteNamedVcs(BaseProject):
-    pass
+@input_project(remote, named, vcs)
+class RemoteNamedVcs(ProjectWithContext):
+    def __init__(self, ctx):
+        # type: (ProjectContextProvider) -> None
+        super(RemoteNamedVcs, self).__init__(ctx)
 
 
 class RemoteSdist(ProjectWithContext):
@@ -340,7 +431,9 @@ class RemoteUnnamedVcs(BaseProject):
     pass
 
 
+@input_project(remote, wheel)
 class RemoteWheel(ProjectWithContext):
+
     def __init__(self, parent, link):
         # type: (ProjectWithContext, Link) -> None
         super(RemoteWheel, self).__init__(parent)
@@ -360,7 +453,7 @@ class RemoteWheel(ProjectWithContext):
         # TODO: Derive compatibility from wheel tags and compare against
         #  state. If still compatible-looking then raise NotImplementedError
         #  so the wheel is downloaded.
-        raise NotImplementedError()
+        raise NotImplementedError('TODO')
 
     def prepare(self):
         # type: () -> LocalWheel
@@ -457,19 +550,20 @@ class UnpackedWheel(ProjectWithContext):
     def name(self):
         # type: () -> str
         # TODO: Use self.metadata.
-        return ''
+        raise NotImplementedError('TODO')
 
     @property
     def version(self):
         # type: () -> str
         # TODO: Use self.metadata.
-        return ''
+        raise NotImplementedError('TODO')
 
     @property
     def metadata(self):
         # TODO: Extract from self._unpacked_dir/*.dist-info/METADATA.
-        return
+        raise NotImplementedError('TODO')
 
     def install(self, scheme):
-        # From: pip._internal.req.req_install.InstallRequirement.move_wheel_files.
-        ...
+        # TODO: From:
+        #  pip._internal.req.req_install.InstallRequirement.move_wheel_files.
+        raise NotImplementedError('TODO')

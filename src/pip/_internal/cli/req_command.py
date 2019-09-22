@@ -17,6 +17,10 @@ from pip._internal.cli.command_context import CommandContextMixIn
 from pip._internal.exceptions import CommandError
 from pip._internal.index.package_finder import PackageFinder
 from pip._internal.legacy_resolve import Resolver
+from pip._internal.models.requirement import (
+    ParsedRequirement,
+    parse_requirement,
+)
 from pip._internal.models.selection_prefs import SelectionPreferences
 from pip._internal.network.session import PipSession
 from pip._internal.operations.prepare import RequirementPreparer
@@ -214,6 +218,29 @@ class RequirementCommand(IndexGroupCommand):
             upgrade_strategy=upgrade_strategy,
             py_version_info=py_version_info,
         )
+
+    def populate_new_requirement_set(
+        self,
+        args,  # type: List[str]
+        editable,  # type: bool
+    ):
+        # type: (...) -> List[ParsedRequirement]
+        """
+        :param args: string arguments from which we derive the requirements.
+        :param editable: whether global editable mode is turned on
+        :return:
+        """
+        result = []
+        for requirement_spec in args:
+            result.append(
+                parse_requirement(
+                    requirement_spec,
+                    source='command-line',
+                    editable=editable,
+                    constraint=False,
+                )
+            )
+        return result
 
     def populate_requirement_set(
         self,
