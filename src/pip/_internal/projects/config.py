@@ -1,3 +1,7 @@
+"""Configuration represents inputs that alter the behavior of project
+preparation.
+"""
+
 class ProjectConfig(object):
     """Configuration propagated between projects.
     """

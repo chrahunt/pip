@@ -1,46 +1,64 @@
-"""Keeps track of types.
+"""Utilities for keeping track of all the project types and providing
+a mechanism for retrieving them based on traits (e.g. editable, unnamed, vcs).
 """
 from pip._internal.utils.typing import MYPY_CHECK_RUNNING
 
 if MYPY_CHECK_RUNNING:
-    from typing import Any, Dict, List
+    from typing import Any, Dict, Iterable, List, Type
+
+    from typing_extensions import Protocol
+
+    from pip._internal.models.requirement import ParsedRequirement
+    from pip._internal.projects.base import BaseProject
+
+    class ConstructibleProject(Protocol):
+        """A type which provides `traits` (used as a key for locating the type)
+        as well as a method for generating a project from a parsed requirement.
+        """
+        traits = []  # type: List[str]
+
+        @classmethod
+        def from_req(cls, req):
+            # type: (ParsedRequirement) -> BaseProject
+            ...
 
 
-_projects = []
+_projects = []  # type: List[Type[ConstructibleProject]]
 
 
-def input_project(*traits):
-    """Mark a project as valid for input.
+def register(cls):
+    # type: (Type[ConstructibleProject]) -> Type[ConstructibleProject]
+    """Use as a decorator on project classes that may be used by initial input
+    requirements (either from the user or as a dependency.
+
+    The argument type enforces that the class provides `traits`.
     """
-    def cls_handler(cls):
-        cls.traits = traits
-        _projects.append(cls)
-        return cls
-
-    return cls_handler
+    _projects.append(cls)
+    return cls
 
 
 def all_projects():
-    # type: () -> List
+    # type: () -> List[Type[ConstructibleProject]]
+    """Returns a list of all registered project types.
+    """
     return list(_projects)
 
 
 def type_key(traits):
-    # type: (List[str]) -> str
+    # type: (Iterable[str]) -> str
     return '-'.join(sorted(traits))
 
 
 class ProjectTypeRegistry(object):
-    """Tracks types and maps input traits associated with a
-    requirement to a concrete type.
+    """Tracks types and maps a set of traits to a concrete type.
     """
     def __init__(self, projects):
-        # type: (Dict[str, ...]) -> None
+        # type: (Dict[str, Type[ConstructibleProject]]) -> None
         self._types = projects
 
     @classmethod
     def from_projects(cls, projects):
-        # type: (List) -> ProjectTypeRegistry
+        # type: (List[Type[ConstructibleProject]]) -> ProjectTypeRegistry
         result = {}
         for project in projects:
             key = type_key(project.traits)
@@ -48,6 +66,8 @@ class ProjectTypeRegistry(object):
         return ProjectTypeRegistry(result)
 
     def __getitem__(self, item):
-        # type: (List[str]) -> Any
+        # type: (List[str]) -> Type[ConstructibleProject]
+        """Given a set of traits, return the associated concrete type.
+        """
         key = type_key(item)
         return self._types[key]

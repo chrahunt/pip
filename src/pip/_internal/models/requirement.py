@@ -39,6 +39,16 @@ def parse_requirement(
     global_options=None,  # type: Optional[List[str]]
 ):
     # type: (...) -> ParsedRequirement
+    """
+    :param req: the input requirement string
+    :param source: the source of the requirement, for logging
+    :param editable: whether the requirement is editable
+    :param constraint: whether the requirement is a constraint
+    :param build_options: TBD
+    :param install_options: TBD
+    :param global_options: TBD
+    :return: the generated ParsedRequirement
+    """
     if editable:
         parts = parse_req_from_editable(req)
     else:

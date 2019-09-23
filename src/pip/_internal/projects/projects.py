@@ -1,6 +1,20 @@
+"""Projects representing the various states that a package may be in, along
+with implementations of ProjectInterface methods/properties to query their
+information.
+
+When not immediately available, projects will generally acquire their
+information lazily.
+
+If a previous state of the project could have acquired some information that
+would have been used in resolution, it will pass that information on as a
+Requirement. Later states of the project should explicitly validate that
+information against newly-acquired information. For example, validating an
+`#egg=`-provided value against the name in the metadata output from
+`python setup.py egg_info`.
+"""
+
 import os
 import sys
-from collections import namedtuple
 from contextlib import contextmanager
 
 from pip._vendor import six
@@ -9,7 +23,8 @@ from pip._vendor.packaging.requirements import Requirement
 
 from pip._internal.download import unpack_file_url
 from pip._internal.projects.base import BaseProject
-from pip._internal.projects.registry import input_project
+from pip._internal.projects.context import ProjectContext, ProjectWithContext
+from pip._internal.projects.registry import register
 from pip._internal.projects.traits import (
     archive,
     directory,
@@ -25,7 +40,6 @@ from pip._internal.pyproject import load_pyproject_toml, make_pyproject_path
 from pip._internal.utils.misc import (
     cached_property,
     call_subprocess,
-    ensure_dir,
 )
 from pip._internal.utils.temp_dir import TempDirectory
 from pip._internal.utils.typing import MYPY_CHECK_RUNNING
@@ -33,43 +47,18 @@ from pip._internal.utils.ui import open_spinner
 from pip._internal.wheel import Wheel
 
 if MYPY_CHECK_RUNNING:
-    from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
+    from typing import (
+        Any, Callable, Dict, Iterator, List, Mapping, Optional, Tuple, Union,
+    )
 
-    from pip._internal.projects.config import ProjectConfig
-    from pip._internal.projects.services import ProjectServices
     from pip._internal.models.link import Link
     from pip._internal.models.requirement import ParsedRequirement
 
-
-class ProjectContextProvider(object):
-    """
-    Propagate config and services from one project to the next.
-    """
-    def __init__(self, source):
-        # type: (ProjectContextProvider) -> None
-        super(ProjectContextProvider, self).__init__()
-        self.config = source.config  # type: ProjectConfig
-        self.services = source.services  # type: ProjectServices
-
-    @classmethod
-    def from_info(cls, config, services):
-        # type: (ProjectConfig, ProjectServices) -> ProjectContextProvider
-        """Bootstrap a context provider from its component parts."""
-        FakeContextProvider = namedtuple(
-            'FakeContextProvider',
-            ['config', 'services'],
-        )
-        return cls(FakeContextProvider(config, services))
-
-
-class ProjectWithContext(ProjectContextProvider, BaseProject):
-    def __init__(self, ctx):
-        # type: (ProjectContextProvider) -> None
-        super(ProjectWithContext, self).__init__(ctx)
+    Downloader = Callable[[Link, str], None]
 
 
 def download(downloader, source):
-    # type: (..., Link) -> str
+    # type: (Downloader, Link) -> str
     # TODO: Globally manage temporary directory.
     temp_dir = TempDirectory(kind="download")
     temp_dir.create()
@@ -78,12 +67,20 @@ def download(downloader, source):
     return output_path
 
 
-@input_project(local, archive)
+@register
 class LocalArchive(ProjectWithContext):
+
+    traits = [local, archive]
+
     def __init__(self, ctx, link):
-        # type: (ProjectContextProvider, Link) -> None
+        # type: (ProjectContext, Link) -> None
         super(LocalArchive, self).__init__(ctx)
         self._link = link
+
+    @classmethod
+    def from_req(cls, req):
+        # type: (ParsedRequirement) -> LocalArchive
+        ...
 
     def prepare(self):
         # type: () -> UnpackedSources
@@ -93,10 +90,13 @@ class LocalArchive(ProjectWithContext):
         return UnpackedSources(self, temp_dir.path, str(self._link))
 
 
-@input_project(local, editable, directory)
+@register
 class LocalEditableDirectory(ProjectWithContext):
+
+    traits = [local, editable, directory]
+
     def __init__(self, ctx, link):
-        # type: (ProjectContextProvider, Link) -> None
+        # type: (ProjectContext, Link) -> None
         super(LocalEditableDirectory, self).__init__(ctx)
         self._link = link
 
@@ -114,8 +114,8 @@ class LocalEditableDirectory(ProjectWithContext):
 class LocalEditableLegacy(ProjectWithContext):
     def __init__(
         self,
-        ctx,  # type: ProjectContextProvider
-        link,  # type: Link
+        ctx,       # type: ProjectContext
+        link,      # type: Link
         req=None,  # type: Optional[Requirement]
     ):
         # type: (...) -> None
@@ -147,10 +147,13 @@ class LocalEditableLegacy(ProjectWithContext):
         raise NotImplementedError('TODO')
 
 
-@input_project(local, editable, named, vcs)
+@register
 class LocalEditableNamedVcs(ProjectWithContext):
+
+    traits = [local, editable, named, vcs]
+
     def __init__(self, ctx, link, req):
-        # type: (ProjectContextProvider, Link, Requirement) -> None
+        # type: (ProjectContext, Link, Requirement) -> None
         super(LocalEditableNamedVcs, self).__init__(ctx)
         self._link = link
         self._req = req
@@ -178,9 +181,9 @@ class LocalEditableNamedVcs(ProjectWithContext):
 class LocalLegacyProject(ProjectWithContext):
     def __init__(
         self,
-        ctx,  # type: ProjectContextProvider
+        ctx,               # type: ProjectContext
         source_directory,  # type: str
-        req,  # type: Requirement
+        req=None,          # type: Optional[Requirement]
     ):
         # type: (...) -> None
         super(LocalLegacyProject, self).__init__(ctx)
@@ -189,11 +192,13 @@ class LocalLegacyProject(ProjectWithContext):
 
     @property
     def name(self):
+        # type: () -> str
         # TODO: Derive from metadata.
         raise NotImplementedError('TODO')
 
     @property
     def version(self):
+        # type: () -> str
         # TODO: Derive from metadata.
         raise NotImplementedError('TODO')
 
@@ -224,7 +229,7 @@ class Pep517BackendHolder(object):
 
     @contextmanager
     def backend_operation(self, spin_message):
-        # type: (str) -> Pep517HookCaller
+        # type: (str) -> Iterator[Pep517HookCaller]
         def runner(
             cmd,  # type: List[str]
             cwd=None,  # type: Optional[str]
@@ -246,8 +251,8 @@ class Pep517BackendHolder(object):
 class LocalModernProject(ProjectWithContext):
     def __init__(
         self,
-        ctx,  # type: ProjectContextProvider
-        source_directory,  # type: str
+        ctx,                  # type: ProjectContext
+        source_directory,     # type: str
         pyproject_toml_data,  # type: Tuple[List[str], str, List[str]]
     ):
         # type: (...) -> None
@@ -267,7 +272,8 @@ class LocalModernProject(ProjectWithContext):
         #  implements `prepare_metadata_for_build_wheel`, but per
         #  pypa/pep517#58, there is not a way to NOT build the wheel if the
         #  hook does not exist. For consistency we will always build the wheel.
-        # XXX: Once the issue above is fixed we should try to invoke the hook
+        # XXX: Once pypa/pep517#60 is in the vendored pep517 included in pip,
+        #  then we can
         #  and provide the metadata if possible.
         raise NotImplementedError()
 
@@ -282,15 +288,22 @@ class LocalModernProject(ProjectWithContext):
         raise NotImplementedError('TODO')
 
 
-@input_project(local, named, vcs)
+@register
 class LocalNamedVcs(ProjectWithContext):
+
+    traits = [local, named, vcs]
+
     def __init__(self, ctx, source_directory):
+        # type: (ProjectContext, str) -> None
         super(LocalNamedVcs, self).__init__(ctx)
         self._source_directory = source_directory
 
 
-@input_project(local, directory)
+@register
 class LocalNonEditableDirectory(ProjectWithContext):
+
+    traits = [local, unnamed, directory]
+
     def __init__(self, ctx, source_directory):
         super(LocalNonEditableDirectory, self).__init__(ctx)
         self._source_directory = source_directory
@@ -298,6 +311,7 @@ class LocalNonEditableDirectory(ProjectWithContext):
 
 class LocalSdist(ProjectWithContext):
     def __init__(self, ctx, path):
+        # type: (ProjectContext, str) -> None
         super(LocalSdist, self).__init__(ctx)
         self._path = path
 
@@ -312,6 +326,7 @@ class LocalSdist(ProjectWithContext):
         raise NotImplementedError()
 
     def save_sdist(self):
+        # type: () -> None
         # TODO: Copy sdist to provided directory.
         raise NotImplementedError('TODO')
 
@@ -323,26 +338,32 @@ class LocalSdist(ProjectWithContext):
         return UnpackedSources(self, temp_dir.path, str(self._path))
 
 
-@input_project(local, unnamed, vcs)
+@register
 class LocalUnnamedVcs(ProjectWithContext):
+
+    traits = [local, unnamed, vcs]
+
     def __init__(self, ctx):
-        # type: (ProjectContextProvider) -> None
+        # type: (ProjectContext) -> None
         super(LocalUnnamedVcs, self).__init__(ctx)
         raise NotImplementedError('TODO')
 
 
+@register
 class LocalWheel(ProjectWithContext):
+
+    traits = [local, wheel]
 
     """
     A local wheel file provided by the user or downloaded from an index.
     """
 
-    def __init__(self, parent, link):
-        # type: (ProjectWithContext, Link) -> None
+    def __init__(self, ctx, link):
+        # type: (ProjectContext, Link) -> None
         """
         :param link: link to local wheel file
         """
-        super(LocalWheel, self).__init__(parent)
+        super(LocalWheel, self).__init__(ctx)
         # Link to local wheel file.
         self._link = link
         self._wheel = Wheel(self._link.filename)
@@ -378,10 +399,13 @@ class LocalWheel(ProjectWithContext):
         return UnpackedWheel(self, source_dir.path)
 
 
-@input_project(remote, archive)
+@register
 class RemoteArchive(ProjectWithContext):
+
+    traits = [remote, archive]
+
     def __init__(self, ctx, link):
-        # type: (ProjectContextProvider, Link) -> None
+        # type: (ProjectContext, Link) -> None
         super(RemoteArchive, self).__init__(ctx)
         self._link = link
 
@@ -391,23 +415,29 @@ class RemoteArchive(ProjectWithContext):
         return LocalArchive(self, Link(downloaded))
 
 
-@input_project(remote, editable, named, vcs)
+@register
 class RemoteEditableNamedVcs(ProjectWithContext):
+
+    traits = [remote, editable, named, vcs]
+
     def __init__(self, ctx):
-        # type: (ProjectContextProvider) -> None
+        # type: (ProjectContext) -> None
         super(RemoteEditableNamedVcs, self).__init__(ctx)
 
 
-@input_project(remote, named, vcs)
+@register
 class RemoteNamedVcs(ProjectWithContext):
+
+    traits = [remote, named, vcs]
+
     def __init__(self, ctx):
-        # type: (ProjectContextProvider) -> None
+        # type: (ProjectContext) -> None
         super(RemoteNamedVcs, self).__init__(ctx)
 
 
 class RemoteSdist(ProjectWithContext):
     def __init__(self, ctx, link):
-        # type: (ProjectContextProvider, Link) -> None
+        # type: (ProjectContext, Link) -> None
         super(RemoteSdist, self).__init__(ctx)
         self._link = link
 
@@ -427,12 +457,16 @@ class RemoteSdist(ProjectWithContext):
         return LocalSdist(self, Link(downloaded))
 
 
+@register
 class RemoteUnnamedVcs(BaseProject):
-    pass
+
+    traits = [remote, unnamed, vcs]
 
 
-@input_project(remote, wheel)
+@register
 class RemoteWheel(ProjectWithContext):
+
+    traits = [remote, wheel]
 
     def __init__(self, parent, link):
         # type: (ProjectWithContext, Link) -> None
@@ -466,11 +500,10 @@ class RemoteWheel(ProjectWithContext):
 class UnpackedSources(ProjectWithContext):
     def __init__(
         self,
-        ctx,               # type: ProjectContextProvider
+        ctx,               # type: ProjectContext
         source_directory,  # type: str
         source,            # type: str
-        name=None,         # type: Optional[str]
-        version=None,      # type: Optional[str]
+        req=None,          # type: Optional[ParsedRequirement]
     ):
         # type: (...) -> None
         """
@@ -479,16 +512,13 @@ class UnpackedSources(ProjectWithContext):
             (which contains a setup.py or pyproject.toml)
         :param source: identifier for the origin of the requirement, for error
             reporting
-        :param name: the official name of the requirement, if already
-            determined
-        :param version: the official version of the requirement, if already
+        :param req: the official name of the requirement, if already
             determined
         """
         super(UnpackedSources, self).__init__(ctx)
         self._source_directory = source_directory
         self._source = source
-        self._name = name
-        self._version = version
+        self._req = req
 
     @property
     def name(self):
@@ -525,6 +555,7 @@ class UnpackedSources(ProjectWithContext):
 
     def prepare(self):
         # type: () -> Union[LocalLegacyProject, LocalModernProject]
+        """"""
         # From: InstallRequirement.load_pyproject_toml
         pyproject_toml_data = load_pyproject_toml(
             self.config.use_pep517,
@@ -559,7 +590,7 @@ class UnpackedWheel(ProjectWithContext):
         raise NotImplementedError('TODO')
 
     @property
-    def metadata(self):
+    def _metadata(self):
         # TODO: Extract from self._unpacked_dir/*.dist-info/METADATA.
         raise NotImplementedError('TODO')
 

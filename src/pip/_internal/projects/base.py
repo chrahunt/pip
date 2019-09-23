@@ -1,3 +1,6 @@
+"""Abstract classes for projects.
+"""
+
 from pip._internal.utils.typing import MYPY_CHECK_RUNNING
 
 if MYPY_CHECK_RUNNING:
@@ -5,6 +8,9 @@ if MYPY_CHECK_RUNNING:
 
 
 class ProjectInterface(object):
+    """The external (to the `projects` module) interface for project
+    information.
+    """
     @property
     def name(self):
         # type: () -> str
@@ -23,20 +29,9 @@ class ProjectInterface(object):
         # type: () -> List[str]
         raise NotImplementedError()
 
-    # TODO: Identify the specific parts of the metadata required by clients
-    #  and break this up.
-    @property
-    def metadata(self):
-        """
-        Return relevant metadata for this project.
-
-        If anything expensive is done to do this calculation (like
-        calling prepare_metadata_for_build_wheel) then it should be cached.
-        """
-        raise NotImplementedError()
-
     @property
     def installed(self):
+        # type: () -> bool
         return False
 
     def is_compatible(self, state):
@@ -77,4 +72,4 @@ class BaseProject(ProjectInterface):
         # type: () -> BaseProject
         """Prepare the project for the next stage of processing.
         """
-        ...
+        raise NotImplementedError()

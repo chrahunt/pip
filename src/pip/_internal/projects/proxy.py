@@ -7,7 +7,10 @@ if MYPY_CHECK_RUNNING:
 
 class ProxyProject(ProjectInterface):
     """
-    Holds a BaseProject.
+    A ProjectInterface that delegates to an internal project instance.
+
+    If the internal project cannot provide the requested information, then
+    it is prepared, yielding a new project which is then queried.
     """
     def __init__(self, project):
         # type: (BaseProject) -> None
@@ -36,14 +39,6 @@ class ProxyProject(ProjectInterface):
         except NotImplementedError:
             self._prepare()
         return self.version
-
-    @property
-    def metadata(self):
-        try:
-            return self._project.metadata
-        except NotImplementedError:
-            self._prepare()
-        return self.metadata
 
     def install(self, scheme):
         try:
@@ -74,4 +69,7 @@ class ProxyProject(ProjectInterface):
         return self.save_wheel()
 
     def _prepare(self):
+        """Prepare the contained project, yielding a new project which should
+        hopefully be able to provide the requested information.
+        """
         self._project = self._project.prepare()

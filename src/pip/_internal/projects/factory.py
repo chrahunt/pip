@@ -1,11 +1,13 @@
+"""Provides the main interface for constructing Project instances, given a
+ParsedRequirement.
+"""
+
 import os
 
 from pip._internal.models.requirement import ParsedRequirement
 from pip._internal.projects.base import ProjectInterface
 from pip._internal.projects.config import ProjectConfig
-from pip._internal.projects.projects import (
-    ProjectContextProvider,
-)
+from pip._internal.projects.projects import ProjectContext
 from pip._internal.projects.registry import ProjectTypeRegistry, all_projects
 from pip._internal.projects.traits import (
     archive,
@@ -24,6 +26,8 @@ from pip._internal.utils.filetypes import ARCHIVE_EXTENSIONS
 
 class ProjectFactory(object):
     """
+    Constructs Projects of the appropriate type given a requirement.
+
     Does some of the work of
     - local_resolve.Resolver
     - operations.prepare.Preparer
@@ -35,7 +39,7 @@ class ProjectFactory(object):
     """
     def __init__(self, config, services):
         # type: (ProjectConfig, ProjectServices) -> None
-        self._root = ProjectContextProvider.from_info(config, services)
+        self._root = ProjectContext(config, services)
         self._registry = ProjectTypeRegistry.from_projects(all_projects())
 
     def from_requirement(
@@ -45,10 +49,20 @@ class ProjectFactory(object):
         # type: (...) -> ProjectInterface
         """
         Given a requirement, construct a project for it.
-        """
-        if not req.parts.link:
-            raise ValueError("Only requirements with links are valid!")
 
+        :raises RuntimeError: if
+        """
+        # We actually return ProxyProject instances, so that the returned
+        # objects are more flexible.
+
+        # We don't support "abstract" requirements - the requirement must have
+        # been resolved to some concrete candidate, either explicitly by the
+        # user or as the result of an index request.
+        if not req.parts.link:
+            raise ValueError("Parsed requirements must have links!")
+
+        # We map the parsed requirement to a set of traits, which is used as a
+        # key to locate the correct type in the project registry.
         traits = []
         if (
             req.parts.link.scheme == 'file' or '+file' in req.parts.link.scheme
@@ -72,17 +86,20 @@ class ProjectFactory(object):
 
         if req.parts.link.is_wheel:
             traits.append(wheel)
+        # TODO: sdist - this is important because it will contain name/version
+        #  information that will allow us to avoid downloading anything.
         elif req.parts.link.ext in ARCHIVE_EXTENSIONS:
-            # XXX: Maybe we could be less-strict here.
+            # XXX: Maybe we could be less-strict here and consider it as a
+            #  "file"
             traits.append(archive)
-
-        # TODO: sdist
 
         try:
             project_cls = self._registry[traits]
         except KeyError:
-            raise RuntimeError(
+            raise ValueError(
                 "No class found for {!r}".format(traits)
             )
 
+        # The class itself is actually responsible for going from a parsed
+        # requirement to the project instance.
         return project_cls.from_req(req)
