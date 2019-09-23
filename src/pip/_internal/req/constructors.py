@@ -113,7 +113,14 @@ def parse_editable(editable_req):
 
     if url_no_extras.lower().startswith('file:'):
         package_name = Link(url_no_extras).egg_fragment
-        return package_name, url_no_extras, extras
+        if extras:
+            return (
+                package_name,
+                url_no_extras,
+                Requirement("placeholder" + extras.lower()).extras,
+            )
+        else:
+            return package_name, url_no_extras, None
 
     for version_control in vcs:
         if url.lower().startswith('%s:' % version_control):
@@ -141,8 +148,6 @@ def parse_editable(editable_req):
             "Could not detect requirement name for '%s', please specify one "
             "with #egg=your_package_name" % editable_req
         )
-
-    # return None for extras because they get derived from the egg_fragment.
     return package_name, url, None
 
 
@@ -303,40 +308,39 @@ def parse_req_from_line(name, line_source):
             markers = None
         else:
             markers = Marker(markers_as_string)
-
-    def normalize_file_link(link):
-        # type: (Link) -> Link
-        if not re.search(r'\.\./', link.url):
-            return link
-        # Remove any relative paths.
-        return Link(path_to_url(os.path.normpath(os.path.abspath(link.path))))
-
+    else:
+        markers = None
+    name = name.strip()
     req_as_string = None
+    path = os.path.normpath(os.path.abspath(name))
+    link = None
     extras_as_string = None
 
     if is_url(name):
         link = Link(name)
-
-        if link.scheme == 'file':
-            link = normalize_file_link(link)
-
-        if link.is_wheel:
-            wheel = Wheel(link.filename)  # can raise InvalidWheelFilename
-            req_as_string = "%s==%s" % (wheel.name, wheel.version)
-
     else:
-        path = os.path.normpath(os.path.abspath(name))
         p, extras_as_string = _strip_extras(path)
         url = _get_url_from_path(p, name)
         if url is not None:
             link = Link(url)
 
+    # it's a local file, dir, or url
     if link:
-        if req_as_string is None:
+        # Handle relative file URLs
+        if link.scheme == 'file' and re.search(r'\.\./', link.url):
+            link = Link(
+                path_to_url(os.path.normpath(os.path.abspath(link.path))))
+        # wheel file
+        if link.is_wheel:
+            wheel = Wheel(link.filename)  # can raise InvalidWheelFilename
+            req_as_string = "%s==%s" % (wheel.name, wheel.version)
+        else:
+            # set the req to the egg fragment.  when it's not there, this
+            # will become an 'unnamed' requirement
             req_as_string = link.egg_fragment
 
+    # a requirement specifier
     else:
-        # a requirement specifier
         req_as_string = name
 
     extras = convert_extras(extras_as_string)
