@@ -61,7 +61,6 @@ def download(downloader, source):
     # type: (Downloader, Link) -> str
     # TODO: Globally manage temporary directory.
     temp_dir = TempDirectory(kind="download")
-    temp_dir.create()
     output_path = os.path.join(temp_dir.path, source.filename)
     downloader(source, output_path)
     return output_path
@@ -78,14 +77,13 @@ class LocalArchive(ProjectWithContext):
         self._link = link
 
     @classmethod
-    def from_req(cls, req):
-        # type: (ParsedRequirement) -> LocalArchive
-        ...
+    def from_req(cls, ctx, req):
+        # type: (ProjectContext, ParsedRequirement) -> LocalArchive
+        return cls(ctx, req.parts.link)
 
     def prepare(self):
         # type: () -> UnpackedSources
         temp_dir = TempDirectory(kind="unpack")
-        temp_dir.create()
         unpack_file_url(self._link, temp_dir.path)
         return UnpackedSources(self, temp_dir.path, str(self._link))
 
@@ -333,7 +331,6 @@ class LocalSdist(ProjectWithContext):
     def prepare(self):
         # type: () -> UnpackedSources
         temp_dir = TempDirectory(kind="unpack")
-        temp_dir.create()
         unpack_file_url(self._path, temp_dir.path)
         return UnpackedSources(self, temp_dir.path, str(self._path))
 

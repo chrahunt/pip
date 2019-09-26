@@ -4,7 +4,7 @@ a mechanism for retrieving them based on traits (e.g. editable, unnamed, vcs).
 from pip._internal.utils.typing import MYPY_CHECK_RUNNING
 
 if MYPY_CHECK_RUNNING:
-    from typing import Any, Dict, Iterable, List, Type
+    from typing import Dict, Iterable, List, Type
 
     from typing_extensions import Protocol
 
@@ -44,7 +44,7 @@ def all_projects():
     return list(_projects)
 
 
-def type_key(traits):
+def _make_key(traits):
     # type: (Iterable[str]) -> str
     return '-'.join(sorted(traits))
 
@@ -61,13 +61,13 @@ class ProjectTypeRegistry(object):
         # type: (List[Type[ConstructibleProject]]) -> ProjectTypeRegistry
         result = {}
         for project in projects:
-            key = type_key(project.traits)
+            key = _make_key(project.traits)
             result[key] = project
         return ProjectTypeRegistry(result)
 
-    def __getitem__(self, item):
+    def __getitem__(self, key_parts):
         # type: (List[str]) -> Type[ConstructibleProject]
         """Given a set of traits, return the associated concrete type.
         """
-        key = type_key(item)
+        key = _make_key(key_parts)
         return self._types[key]

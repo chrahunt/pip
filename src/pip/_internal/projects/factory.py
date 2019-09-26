@@ -8,6 +8,7 @@ from pip._internal.models.requirement import ParsedRequirement
 from pip._internal.projects.base import ProjectInterface
 from pip._internal.projects.config import ProjectConfig
 from pip._internal.projects.projects import ProjectContext
+from pip._internal.projects.proxy import ProxyProject
 from pip._internal.projects.registry import ProjectTypeRegistry, all_projects
 from pip._internal.projects.traits import (
     archive,
@@ -65,7 +66,10 @@ class ProjectFactory(object):
         # key to locate the correct type in the project registry.
         traits = []
         if (
-            req.parts.link.scheme == 'file' or '+file' in req.parts.link.scheme
+            # Generic file URL
+            req.parts.link.scheme == 'file' or
+            # VCS file URL
+            '+file' in req.parts.link.scheme
         ):
             traits.append(local)
             if os.path.isdir(req.parts.link.file_path):
@@ -102,4 +106,5 @@ class ProjectFactory(object):
 
         # The class itself is actually responsible for going from a parsed
         # requirement to the project instance.
-        return project_cls.from_req(req)
+        initial_project = project_cls.from_req(req)
+        return ProxyProject(initial_project)
