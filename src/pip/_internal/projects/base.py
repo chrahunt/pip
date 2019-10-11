@@ -27,6 +27,9 @@ class ProjectInterface(object):
     @property
     def dependencies(self):
         # type: () -> List[str]
+        """
+        Returns the basic set of declared dependencies, without filtering.
+        """
         raise NotImplementedError()
 
     @property

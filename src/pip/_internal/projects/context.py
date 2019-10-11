@@ -34,3 +34,7 @@ class ProjectWithContext(ProjectContext, BaseProject):
         super(ProjectWithContext, self).__init__(
             ctx.config, ctx.services,
         )
+
+    def create(self, cls, *args, **kwargs):
+        # type: (...) -> ...
+        return cls(self, *args, **kwargs)

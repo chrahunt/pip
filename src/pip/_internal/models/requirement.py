@@ -1,5 +1,4 @@
 from pip._internal.req.constructors import (
-    RequirementParts,
     parse_req_from_editable,
     parse_req_from_line,
 )
@@ -7,6 +6,8 @@ from pip._internal.utils.typing import MYPY_CHECK_RUNNING
 
 if MYPY_CHECK_RUNNING:
     from typing import List, Optional
+
+    from pip._internal.req.constructors import RequirementParts
 
 
 class ParsedRequirement(object):

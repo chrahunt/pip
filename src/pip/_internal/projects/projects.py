@@ -21,7 +21,10 @@ from pip._vendor import six
 from pip._vendor.pep517.wrappers import Pep517HookCaller
 from pip._vendor.packaging.requirements import Requirement
 
+from pip._internal.build_env import NoOpBuildEnvironment
+from pip._internal.commands.install import is_wheel_installed
 from pip._internal.download import unpack_file_url
+from pip._internal.operations.generate_metadata import _generate_metadata_legacy
 from pip._internal.projects.base import BaseProject
 from pip._internal.projects.context import ProjectContext, ProjectWithContext
 from pip._internal.projects.registry import register
@@ -37,10 +40,10 @@ from pip._internal.projects.traits import (
     wheel,
 )
 from pip._internal.pyproject import load_pyproject_toml, make_pyproject_path
-from pip._internal.utils.misc import (
-    cached_property,
-    call_subprocess,
-)
+from pip._internal.req.req_install import get_dist
+from pip._internal.utils.misc import cached_property
+from pip._internal.utils.packaging import get_metadata
+from pip._internal.utils.subprocess import call_subprocess
 from pip._internal.utils.temp_dir import TempDirectory
 from pip._internal.utils.typing import MYPY_CHECK_RUNNING
 from pip._internal.utils.ui import open_spinner
@@ -191,32 +194,56 @@ class LocalLegacyProject(ProjectWithContext):
     @property
     def name(self):
         # type: () -> str
-        # TODO: Derive from metadata.
-        raise NotImplementedError('TODO')
+        return self._metadata["Name"]
 
     @property
     def version(self):
         # type: () -> str
-        # TODO: Derive from metadata.
+        return self._metadata["Version"]
+
+    @property
+    def dependencies(self):
+        # type: () -> List[str]
         raise NotImplementedError('TODO')
 
     @cached_property
-    def metadata(self):
-        # TODO: Call egg_info (req.req_install.InstallRequirement.run_egg_info)
-        raise NotImplementedError('TODO')
+    def _metadata(self):
+        metadata_directory = _generate_metadata_legacy(
+            name=None,
+            link=self._source_directory,
+            setup_py_path=os.path.join(self._source_directory, 'setup.py'),
+            isolated=self.config.isolated,
+            editable=False,
+            source_directory=self._source_directory,
+            build_env=NoOpBuildEnvironment(),
+        )
 
-    def install(self, scheme):
-        # type: (Dict) -> None
-        # TODO:
-        #  1. If wheel is installed, try to build a wheel
-        # TODO: How to organize this so that it will fail with
-        #  NotImplementedError if a wheel build would succeed?
-        raise NotImplementedError('TODO')
+        dist = get_dist(metadata_directory)
+
+        return get_metadata(dist)
 
     def prepare(self):
-        # type: () -> BaseProject
-        # TODO: If wheel is installed, build wheel
-        # TODO: If that fails, or wheel is not installed, then install directly.
+        # type: () -> Union[LocalLegacyNonWheelProject, LocalWheel]
+        if not is_wheel_installed():
+            return LocalLegacyNonWheelProject(self._source_directory, self._metadata)
+        # TODO:
+        #  1. Try to build a wheel
+        #  2. If wheel build succeeds, return LocalWheel
+        #  3. Otherwise, return LocalLegacyNonWheelProject
+        raise NotImplementedError('TODO')
+
+
+class LocalLegacyNonWheelProject(ProjectWithContext):
+    def __init__(self, ctx, source_directory, metadata):
+        # type: (ProjectContext, str, Dict)
+        super(LocalLegacyNonWheelProject, self).__init__(ctx)
+        self._source_directory = source_directory
+        self._metadata = metadata
+
+    @property
+    def install(self, scheme):
+        # type: (Dict) -> None
+        # TODO: setup.py install
         raise NotImplementedError('TODO')
 
 
@@ -266,13 +293,11 @@ class LocalModernProject(ProjectWithContext):
 
     @property
     def metadata(self):
-        # XXX: We may be able to avoid building a wheel here if the backend
-        #  implements `prepare_metadata_for_build_wheel`, but per
-        #  pypa/pep517#58, there is not a way to NOT build the wheel if the
-        #  hook does not exist. For consistency we will always build the wheel.
-        # XXX: Once pypa/pep517#60 is in the vendored pep517 included in pip,
-        #  then we can
-        #  and provide the metadata if possible.
+        # TODO:
+        #  1. self._pip517_backend.prepare_metadata_for_build_wheel(
+        #       ..., _allow_fallback=False
+        #     )
+        #  2. If that fails, raise NotImplementedError()
         raise NotImplementedError()
 
     def prepare(self):
@@ -282,6 +307,8 @@ class LocalModernProject(ProjectWithContext):
         #     (distributions.source.legacy.SourceDistribution
         #      .prepare_distribution_metadata)
         #  2. Do wheel build (wheel.WheelBuilder._build_one_pep517)
+        #     1. If prepare_metadata_for_build_wheel ran/succeeded, then pass
+        #        in the same metadata directory.
         #  3. Return LocalWheel
         raise NotImplementedError('TODO')
 
@@ -291,20 +318,37 @@ class LocalNamedVcs(ProjectWithContext):
 
     traits = [local, named, vcs]
 
-    def __init__(self, ctx, source_directory):
-        # type: (ProjectContext, str) -> None
+    def __init__(self, ctx, source_directory, name):
+        # type: (ProjectContext, str, str) -> None
         super(LocalNamedVcs, self).__init__(ctx)
         self._source_directory = source_directory
+        self._name = name
 
 
 @register
 class LocalNonEditableDirectory(ProjectWithContext):
 
+    """
+    e.g. pip install .
+    """
+
     traits = [local, unnamed, directory]
 
     def __init__(self, ctx, source_directory):
+        # type: (ProjectContext, Link) -> None
         super(LocalNonEditableDirectory, self).__init__(ctx)
         self._source_directory = source_directory
+
+    @classmethod
+    def from_req(cls, ctx, req):
+        # type: (ProjectContext, ParsedRequirement) -> LocalNonEditableDirectory
+        return cls(ctx, req.parts.link)
+
+    def prepare(self):
+        # type: () -> UnpackedSources
+        temp_dir = TempDirectory(kind="unpack")
+        unpack_file_url(self._source_directory, temp_dir.path)
+        return UnpackedSources(self, temp_dir.path, str(self._source_directory))
 
 
 class LocalSdist(ProjectWithContext):
@@ -343,6 +387,11 @@ class LocalUnnamedVcs(ProjectWithContext):
     def __init__(self, ctx):
         # type: (ProjectContext) -> None
         super(LocalUnnamedVcs, self).__init__(ctx)
+        raise NotImplementedError('TODO')
+
+    def prepare(self):
+        # type: () -> Union[LocalLegacyProject, LocalModernProject]
+        # TODO: Identify project type
         raise NotImplementedError('TODO')
 
 
@@ -552,7 +601,6 @@ class UnpackedSources(ProjectWithContext):
 
     def prepare(self):
         # type: () -> Union[LocalLegacyProject, LocalModernProject]
-        """"""
         # From: InstallRequirement.load_pyproject_toml
         pyproject_toml_data = load_pyproject_toml(
             self.config.use_pep517,
