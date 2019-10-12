@@ -106,5 +106,5 @@ class ProjectFactory(object):
 
         # The class itself is actually responsible for going from a parsed
         # requirement to the project instance.
-        initial_project = project_cls.from_req(req)
+        initial_project = project_cls.from_req(self._root, req)
         return Project(initial_project)

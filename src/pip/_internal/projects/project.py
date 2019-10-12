@@ -1,4 +1,5 @@
 from functools import wraps
+from weakref import WeakKeyDictionary
 
 from pip._internal.projects.base import ProjectInterface
 from pip._internal.utils.typing import MYPY_CHECK_RUNNING
@@ -10,6 +11,9 @@ if MYPY_CHECK_RUNNING:
 
 
 def if_not_implemented(prepare):
+    """Decorator that calls `prepare` and then retries
+    the decorated function.
+    """
     def function_acceptor(fn):
         def wrapper(self, *args, **kwargs):
             try:
@@ -20,6 +24,33 @@ def if_not_implemented(prepare):
 
         return wraps(fn)(wrapper)
     return function_acceptor
+
+
+class checked_property(object):
+    """Check that return value is always the same.
+    """
+    def __init__(self, fn):
+        self._fn = fn
+        self._fn_name = fn.__name__
+        self._objs = WeakKeyDictionary()
+
+    def __get__(self, obj, cls):
+        if obj is None:
+            return self
+        value = self._fn(obj)
+        previous_value = (
+            self._objs
+                .setdefault(obj, {})
+                .setdefault(self._fn_name, value)
+        )
+        if value != previous_value:
+            raise RuntimeError(
+                "Output from {!r}.{} does not match previous. "
+                "Old: {!r}; New: {!r}".format(
+                    obj, self._fn_name, value, previous_value
+                )
+            )
+        return value
 
 
 class Project(ProjectInterface):
@@ -48,35 +79,35 @@ class Project(ProjectInterface):
             states.append(repr(state))
         return 'Project({})'.format(' -> '.join(states))
 
-    prepare = if_not_implemented(_prepare)
+    prepared = if_not_implemented(_prepare)
 
-    @property
-    @prepare
+    @checked_property
+    @prepared
     def name(self):
         return self._project.name
 
-    @property
-    @prepare
+    @checked_property
+    @prepared
     def dependencies(self):
         return self._project.dependencies
 
-    @property
-    @prepare
+    @checked_property
+    @prepared
     def version(self):
         return self._project.version
 
-    @prepare
+    @prepared
     def install(self, scheme):
         return self._project.install(scheme)
 
-    @prepare
+    @prepared
     def uninstall(self):
         return self._project.uninstall()
 
-    @prepare
+    @prepared
     def save_sdist(self):
         return self._project.save_sdist()
 
-    @prepare
+    @prepared
     def save_wheel(self):
         return self._project.save_wheel()

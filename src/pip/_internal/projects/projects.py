@@ -2,28 +2,55 @@
 with implementations of ProjectInterface methods/properties to query their
 information.
 
-When not immediately available, projects will generally acquire their
-information lazily.
+All projects have the same shape:
 
-If a previous state of the project could have acquired some information that
-would have been used in resolution, it will pass that information on as a
-Requirement. Later states of the project should explicitly validate that
-information against newly-acquired information. For example, validating an
-`#egg=`-provided value against the name in the metadata output from
-`python setup.py egg_info`.
+class ExampleSimpleProject(ProjectWithContext):
+    def __init__(self, ctx, ...):
+        # type: (ProjectContext, ...) -> None
+        super(ExampleSimpleProject, self).__init__(ctx)
+        ...
+
+    ...
+
+The `ProjectWithContext` parent is a helper class to provide `config` and
+`services` members for the project classes.
+
+
+A project which may be the initial state for some operation looks like
+
+@register
+class ExampleProject(ProjectWithContext):
+
+    traits = [a, b, c]
+
+    ...
+
+    @classmethod
+    def from_req(cls, ctx, req):
+        # type: (ProjectContext, ParsedRequirement) -> ExampleProject
+        ...
+
+    ...
+
+This registers the class for the traits (a, b, c), so any incoming requirement
+that matches those traits will get mapped to this class type.
+
+Classes should take only simple types, to ease testing.
 """
 
 import glob
 import os
 import sys
 from contextlib import contextmanager
+from collections import namedtuple
 
 from pip._vendor import six
-from pip._vendor.pep517.wrappers import Pep517HookCaller
+from pip._vendor.pep517.wrappers import HookMissing, Pep517HookCaller
 from pip._vendor.packaging.requirements import Requirement
 
 from pip._internal.build_env import NoOpBuildEnvironment
 from pip._internal.download import unpack_file_url
+from pip._internal.models.link import Link
 from pip._internal.operations.generate_metadata import _generate_metadata_legacy
 from pip._internal.projects.base import BaseProject
 from pip._internal.projects.context import ProjectContext, ProjectWithContext
@@ -47,14 +74,14 @@ from pip._internal.utils.subprocess import call_subprocess
 from pip._internal.utils.temp_dir import TempDirectory
 from pip._internal.utils.typing import MYPY_CHECK_RUNNING
 from pip._internal.utils.ui import open_spinner
-from pip._internal.wheel import Wheel, move_wheel_files
+from pip._internal.utils.urls import path_to_url
+from pip._internal.wheel import Wheel, move_wheel_files, legacy_wheel_build
 
 if MYPY_CHECK_RUNNING:
     from typing import (
         Any, Callable, Dict, Iterator, List, Mapping, Optional, Tuple, Union,
     )
 
-    from pip._internal.models.link import Link
     from pip._internal.models.requirement import ParsedRequirement
     from pip._internal.models.scheme import Scheme
 
@@ -80,6 +107,9 @@ class LocalArchive(ProjectWithContext):
         super(LocalArchive, self).__init__(ctx)
         self._link = link
 
+    def __repr__(self):
+        return 'LocalArchive(link={!r})'.format(self._link)
+
     @classmethod
     def from_req(cls, ctx, req):
         # type: (ProjectContext, ParsedRequirement) -> LocalArchive
@@ -102,6 +132,9 @@ class LocalEditableDirectory(ProjectWithContext):
         super(LocalEditableDirectory, self).__init__(ctx)
         self._link = link
 
+    def __repr__(self):
+        return 'LocalEditableDirectory(link={!r})'.format(self._link)
+
     @classmethod
     def from_req(cls, req):
         # type: (ParsedRequirement) -> LocalEditableDirectory
@@ -118,12 +151,10 @@ class LocalEditableLegacy(ProjectWithContext):
         self,
         ctx,       # type: ProjectContext
         link,      # type: Link
-        req=None,  # type: Optional[Requirement]
     ):
         # type: (...) -> None
         super(LocalEditableLegacy, self).__init__(ctx)
         self._link = link
-        self._req = req
 
     @property
     def name(self):
@@ -180,17 +211,40 @@ class LocalEditableNamedVcs(ProjectWithContext):
         return LocalEditableLegacy(self, self._link, self._req)
 
 
+@register
+class LocalEditableUnnamedDirectory(ProjectWithContext):
+
+    traits = [local, editable, unnamed, directory]
+
+    def __init__(self, ctx, link):
+        # type: (ProjectContext, Link) -> None
+        super(LocalEditableDirectory, self).__init__(ctx)
+        self._link = link
+
+    def __repr__(self):
+        return 'LocalEditableDirectory(link={!r})'.format(self._link)
+
+    @classmethod
+    def from_req(cls, req):
+        # type: (ParsedRequirement) -> LocalEditableDirectory
+        raise NotImplementedError('TODO')
+
+    def prepare(self):
+        # type: () -> LocalEditableLegacy
+        # TODO: Verifications and then return LocalEditableLegacy.
+        raise NotImplementedError('TODO')
+
+
 class LocalLegacyProject(ProjectWithContext):
-    def __init__(
-        self,
-        ctx,               # type: ProjectContext
-        source_directory,  # type: str
-        req=None,          # type: Optional[Requirement]
-    ):
-        # type: (...) -> None
+    def __init__(self, ctx, source_directory):
+        # type: (ProjectContext, str) -> None
         super(LocalLegacyProject, self).__init__(ctx)
         self._source_directory = source_directory
-        self._req = req
+
+    def __repr__(self):
+        return 'LocalLegacyProject(source_directory={!r})'.format(
+            self._source_directory
+        )
 
     @property
     def name(self):
@@ -209,7 +263,12 @@ class LocalLegacyProject(ProjectWithContext):
 
     @cached_property
     def _metadata(self):
-        metadata_directory = _generate_metadata_legacy(
+        dist = get_dist(self._metadata_directory)
+        return get_metadata(dist)
+
+    @cached_property
+    def _metadata_directory(self):
+        return _generate_metadata_legacy(
             name=None,
             link=self._source_directory,
             setup_py_path=os.path.join(self._source_directory, 'setup.py'),
@@ -219,27 +278,41 @@ class LocalLegacyProject(ProjectWithContext):
             build_env=NoOpBuildEnvironment(),
         )
 
-        dist = get_dist(metadata_directory)
-
-        return get_metadata(dist)
-
     def prepare(self):
         # type: () -> Union[LocalLegacyNonWheelProject, LocalWheel]
         if not self.config.legacy_wheel_build:
-            return LocalLegacyNonWheelProject(self._source_directory, self._metadata)
-        # TODO:
-        #  1. Try to build a wheel
-        #  2. If wheel build succeeds, return LocalWheel
-        #  3. Otherwise, return LocalLegacyNonWheelProject
-        raise NotImplementedError('TODO')
+            return LocalLegacyNonWheelProject(
+                self, self._source_directory, self._metadata_directory
+            )
+
+        build_dir = TempDirectory(kind="wheel-build")
+        try:
+            wheel_path = legacy_wheel_build(
+                setup_py_path=os.path.join(self._source_directory, 'setup.py'),
+                global_options=[],
+                build_options=[],
+                destination_dir=build_dir.path,
+                python_tag=None,
+                source_dir=self._source_directory,
+                name=self.name,
+                spinner=None,
+            )
+        except Exception:
+            # TODO: logging
+            # For legacy projects we fall back to non-wheel installation.
+            return LocalLegacyNonWheelProject(
+                self, self._source_directory, self._metadata_directory
+            )
+
+        return LocalWheel(self, wheel_path)
 
 
 class LocalLegacyNonWheelProject(ProjectWithContext):
-    def __init__(self, ctx, source_directory, metadata):
-        # type: (ProjectContext, str, Dict)
+    def __init__(self, ctx, source_directory, metadata_directory):
+        # type: (ProjectContext, str, str)
         super(LocalLegacyNonWheelProject, self).__init__(ctx)
         self._source_directory = source_directory
-        self._metadata = metadata
+        self._metadata_directory = metadata_directory
 
     @property
     def install(self, scheme):
@@ -293,13 +366,35 @@ class LocalModernProject(ProjectWithContext):
         self._pep517_backend_holder = Pep517BackendHolder(self._pep517_backend)
 
     @property
+    def name(self):
+        return self._metadata["Name"]
+
+    @property
+    def version(self):
+        return self._metadata["Version"]
+
+    @cached_property
     def _metadata(self):
         # TODO:
         #  1. self._pip517_backend.prepare_metadata_for_build_wheel(
         #       ..., _allow_fallback=False
         #     )
         #  2. If that fails, raise NotImplementedError()
-        raise NotImplementedError()
+        # i.e. InstallRequirement.prepare_pep517_metadata
+        metadata_dir = TempDirectory(kind="modern-metadata")
+
+        try:
+            distinfo_dir = self._pep517_backend.prepare_metadata_for_build_wheel(
+                metadata_dir
+            )
+        except HookMissing:
+            # XXX: May be cleaner to do this in 'prepare'
+            raise NotImplementedError()
+
+        distinfo_dir = os.path.join(metadata_dir, distinfo_dir)
+
+        dist = get_dist(distinfo_dir)
+        return get_metadata(dist)
 
     def prepare(self):
         # type: () -> LocalWheel
@@ -313,6 +408,10 @@ class LocalModernProject(ProjectWithContext):
         #  3. Return LocalWheel
         raise NotImplementedError('TODO')
 
+
+class LocalModernProjectWithMetadata(ProjectWithContext):
+    def __init__(self, ctx, metadata_dir):
+        super().__init__(ctx)
 
 @register
 class LocalNamedVcs(ProjectWithContext):
@@ -405,15 +504,18 @@ class LocalWheel(ProjectWithContext):
     A local wheel file provided by the user or downloaded from an index.
     """
 
-    def __init__(self, ctx, link):
-        # type: (ProjectContext, Link) -> None
+    def __init__(self, ctx, path):
+        # type: (ProjectContext, str) -> None
         """
         :param link: link to local wheel file
         """
         super(LocalWheel, self).__init__(ctx)
         # Link to local wheel file.
-        self._link = link
+        self._link = Link(path_to_url(path))
         self._wheel = Wheel(self._link.filename)
+
+    def __repr__(self):
+        return 'LocalWheel(path={!r})'.format(self._link.file_path)
 
     @property
     def name(self):
@@ -441,7 +543,6 @@ class LocalWheel(ProjectWithContext):
         # From: pip._internal.wheel.WheelBuilder.build.
         # TODO: Globally-manage temporary directories.
         source_dir = TempDirectory(kind="unpacked-wheel")
-        source_dir.create()
         unpack_file_url(link=self._link, location=source_dir.path)
         return UnpackedWheel(self, source_dir.path)
 
@@ -471,6 +572,12 @@ class RemoteEditableNamedVcs(ProjectWithContext):
         # type: (ProjectContext) -> None
         super(RemoteEditableNamedVcs, self).__init__(ctx)
 
+    def prepare(self):
+        # type: () -> LocalEditableNamedVcs
+        # TODO:
+        #  1. Check whether this is already present locally
+        #  2. Download with applicable vcs if not
+        raise NotImplementedError('TODO')
 
 @register
 class RemoteNamedVcs(ProjectWithContext):
@@ -505,9 +612,13 @@ class RemoteSdist(ProjectWithContext):
 
 
 @register
-class RemoteUnnamedVcs(BaseProject):
+class RemoteUnnamedVcs(ProjectWithContext):
 
     traits = [remote, unnamed, vcs]
+
+    def prepare(self):
+        # type: () -> LocalUnnamedVcs
+        raise NotImplementedError('TODO')
 
 
 @register
@@ -623,6 +734,9 @@ class UnpackedWheel(ProjectWithContext):
         super(UnpackedWheel, self).__init__(parent)
         self._unpacked_dir = unpacked_dir
 
+    def __repr__(self):
+        return 'UnpackedWheel({})'.format(self._unpacked_dir)
+
     @property
     def name(self):
         # type: () -> str
@@ -648,8 +762,7 @@ class UnpackedWheel(ProjectWithContext):
         move_wheel_files(
             self.name,
             # Just needs to be stringified for logging, see pypa/pip#7176
-            req=self.name,
+            req=namedtuple('Requirement', ['name'])(self.name),
             wheeldir=self._unpacked_dir,
             scheme=scheme,
         )
-        raise NotImplementedError('TODO')
