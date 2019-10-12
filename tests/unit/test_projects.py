@@ -3,8 +3,10 @@ from textwrap import dedent
 import pytest
 from mock import Mock
 
+from pip._internal.locations import distutils_scheme
 from pip._internal.models.requirement import parse_requirement
 from pip._internal.projects.factory import ProjectFactory
+from pip._internal.projects.project import Project
 from pip._internal.projects.projects import (
     LocalLegacyProject,
     LocalNonEditableDirectory,
@@ -58,3 +60,32 @@ def test_legacy_metadata(legacy_project_factory):
     project = LocalLegacyProject(ctx, str(project_dir))
     assert project.name == 'example'
     assert project.version == '0.1.0'
+
+
+def test_legacy_non_wheel_install(legacy_project_factory, tmpdir):
+    project_dir = legacy_project_factory(
+        name='example', version='0.1.0'
+    )
+
+    base_install = tmpdir / 'env'
+    lib_dir = base_install / 'lib'
+    lib_dir.mkdir(parents=True)
+    bin_dir = base_install / 'bin'
+    bin_dir.mkdir(parents=True)
+    header_dir = base_install / 'include'
+    header_dir.mkdir(parents=True)
+    data_dir = base_install
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    scheme = {
+        'purelib': lib_dir,
+        'platlib': lib_dir,
+        'scripts': bin_dir,
+        'data': data_dir,
+        'headers': header_dir,
+    }
+    ctx = ProjectContext(Mock(), Mock())
+    project = Project(LocalLegacyProject(ctx, str(project_dir)))
+    project.install(scheme)
+
+    assert lib_dir.joinpath('example-0.1.0.dist-info').exists()

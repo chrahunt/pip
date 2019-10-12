@@ -7,8 +7,8 @@ import os
 from pip._internal.models.requirement import ParsedRequirement
 from pip._internal.projects.base import ProjectInterface
 from pip._internal.projects.config import ProjectConfig
+from pip._internal.projects.project import Project
 from pip._internal.projects.projects import ProjectContext
-from pip._internal.projects.proxy import ProxyProject
 from pip._internal.projects.registry import ProjectTypeRegistry, all_projects
 from pip._internal.projects.traits import (
     archive,
@@ -107,4 +107,4 @@ class ProjectFactory(object):
         # The class itself is actually responsible for going from a parsed
         # requirement to the project instance.
         initial_project = project_cls.from_req(req)
-        return ProxyProject(initial_project)
+        return Project(initial_project)

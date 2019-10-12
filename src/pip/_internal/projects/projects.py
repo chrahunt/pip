@@ -13,6 +13,7 @@ information against newly-acquired information. For example, validating an
 `python setup.py egg_info`.
 """
 
+import glob
 import os
 import sys
 from contextlib import contextmanager
@@ -22,7 +23,6 @@ from pip._vendor.pep517.wrappers import Pep517HookCaller
 from pip._vendor.packaging.requirements import Requirement
 
 from pip._internal.build_env import NoOpBuildEnvironment
-from pip._internal.commands.install import is_wheel_installed
 from pip._internal.download import unpack_file_url
 from pip._internal.operations.generate_metadata import _generate_metadata_legacy
 from pip._internal.projects.base import BaseProject
@@ -47,7 +47,7 @@ from pip._internal.utils.subprocess import call_subprocess
 from pip._internal.utils.temp_dir import TempDirectory
 from pip._internal.utils.typing import MYPY_CHECK_RUNNING
 from pip._internal.utils.ui import open_spinner
-from pip._internal.wheel import Wheel
+from pip._internal.wheel import Wheel, move_wheel_files
 
 if MYPY_CHECK_RUNNING:
     from typing import (
@@ -56,6 +56,7 @@ if MYPY_CHECK_RUNNING:
 
     from pip._internal.models.link import Link
     from pip._internal.models.requirement import ParsedRequirement
+    from pip._internal.models.scheme import Scheme
 
     Downloader = Callable[[Link, str], None]
 
@@ -224,7 +225,7 @@ class LocalLegacyProject(ProjectWithContext):
 
     def prepare(self):
         # type: () -> Union[LocalLegacyNonWheelProject, LocalWheel]
-        if not is_wheel_installed():
+        if not self.config.legacy_wheel_build:
             return LocalLegacyNonWheelProject(self._source_directory, self._metadata)
         # TODO:
         #  1. Try to build a wheel
@@ -292,7 +293,7 @@ class LocalModernProject(ProjectWithContext):
         self._pep517_backend_holder = Pep517BackendHolder(self._pep517_backend)
 
     @property
-    def metadata(self):
+    def _metadata(self):
         # TODO:
         #  1. self._pip517_backend.prepare_metadata_for_build_wheel(
         #       ..., _allow_fallback=False
@@ -625,21 +626,30 @@ class UnpackedWheel(ProjectWithContext):
     @property
     def name(self):
         # type: () -> str
-        # TODO: Use self.metadata.
-        raise NotImplementedError('TODO')
+        return self._metadata['Name']
 
     @property
     def version(self):
         # type: () -> str
-        # TODO: Use self.metadata.
-        raise NotImplementedError('TODO')
+        return self._metadata['Version']
 
     @property
     def _metadata(self):
-        # TODO: Extract from self._unpacked_dir/*.dist-info/METADATA.
-        raise NotImplementedError('TODO')
+        matches = glob.glob('{}/*.dist-info'.format(self._unpacked_dir))
+        if len(matches) != 1:
+            raise RuntimeError(
+                'Found more than one dist-info in wheel: {}'.format(matches)
+            )
+        match = matches[0]
+        return get_metadata(get_dist(match))
 
     def install(self, scheme):
-        # TODO: From:
-        #  pip._internal.req.req_install.InstallRequirement.move_wheel_files.
+        # type: (Scheme) -> None
+        move_wheel_files(
+            self.name,
+            # Just needs to be stringified for logging, see pypa/pip#7176
+            req=self.name,
+            wheeldir=self._unpacked_dir,
+            scheme=scheme,
+        )
         raise NotImplementedError('TODO')

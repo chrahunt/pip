@@ -16,3 +16,16 @@ class LegacyBuildHelper(object):
 
     def install(self, scheme):
         ...
+
+
+def legacy_build_wheel(
+    name,  # type: str
+    source_dir,
+    build_env,  # type: BuildEnvironment
+    global_options,
+    setup_py_path,
+    build_options,
+    unpacked_source_directory,
+):
+    # Given data, try to build a wheel.
+    pass
