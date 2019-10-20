@@ -18,6 +18,12 @@ from tests.lib.scripttest import PipTestEnvironment
 from tests.lib.venv import VirtualEnvironment
 
 
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+
+
+pytest_plugins = "tests.plugins.wpr"
+
+
 def pytest_addoption(parser):
     parser.addoption(
         "--keep-tmpdir", action="store_true",

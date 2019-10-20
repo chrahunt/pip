@@ -8,11 +8,49 @@ steps:
     versionSpec: '$(python.version)'
     architecture: '$(python.architecture)'
 
+- powershell: |
+    Invoke-WebRequest -Uri https://go.microsoft.com/fwlink/?linkid=2026036 -OutFile adksetup.exe
+    ./adksetup.exe /features OptionId.WindowsPerformanceToolkit /log adk-setup.log /ceip off /installpath "C:\Program Files (x86)\Windows Kits\10\"
+    # Wait for install to complete.
+    python -c "
+    import os, time
+    start = time.time()
+    last = start
+    while last - start < 60:
+     if os.path.exists('C:/Program Files (x86)/Windows Kits/10/Windows Performance Toolkit/wpr.exe'):
+      break
+     print('Waiting...')
+     time.sleep(2)
+     last = time.time()
+    "
+    Get-Content adk-setup.log
+  displayName: ADK Setup
+
 - bash: pip install --upgrade setuptools tox
   displayName: Install Tox
 
-- script: tox -e py -- -m unit -n 3 --junit-xml=junit/unit-test.xml
+- script: mkdir traces
+  displayName: Make trace output directory
+
+- script:
+    tox -e py -- -m unit --junit-xml=junit/unit-test.xml
+    --use-wpr
+    --wpr-path="C:\Program Files (x86)\Windows Kits\10\Windows Performance Toolkit\wpr.exe"
+    --wpr-profile=GeneralProfile.verbose
+    --wpr-profile=CPU.verbose
+    --wpr-output=traces/wpr-result.etl
   displayName: Tox run unit tests
+
+- script:
+    tracerpt -l traces/wpr-result.etl -export traces/providers.man
+  displayName: Generate trace provider manifest
+
+- task: PublishBuildArtifacts@1
+  displayName: 'Publish trace results'
+  inputs:
+    pathtoPublish: traces
+    artifactName: wpr-result-$(python.version)-$(python.architecture).etl
+  condition: succeededOrFailed()
 
 - ${{ if eq(parameters.runIntegrationTests, 'true') }}:
   - powershell: |
