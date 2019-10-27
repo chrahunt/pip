@@ -9,6 +9,48 @@ steps:
     architecture: '$(python.architecture)'
 
 - powershell: |
+    echo "Installing FS-iSCSITarget-Server"
+    Install-WindowsFeature -Name FS-iSCSITarget-Server
+
+    # Allow connection on loopback interface.
+    Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\iSCSI Target' -Name AllowLoopBack -Value 1
+
+    echo "Starting MsiSCSI"
+    Start-Service msiscsi
+    $retry = 10
+    do
+    {
+      $count = (Get-Service msiscsi | ? {$_.status -eq "Running"}).count
+      $retry--
+      sleep -Milliseconds 500
+    } until ($count -Eq 0 -or $retry -Eq 0)
+
+    $service = Get-Service msiscsi
+    if ($service.Status -Ne "Running") {
+      throw "msiscsi not running"
+    }
+
+    echo "Configuring Firewall"
+    Get-NetFirewallServiceFilter -Service msiscsi | Enable-NetFirewallRule
+
+    echo "Configuring RAMDisk"
+    New-IscsiVirtualDisk -ComputerName localhost -Path ramdisk:RAMDISK1.vhdx -Size 1GB
+    New-IscsiServerTarget Target1 -ComputerName localhost -InitiatorId "IQN:*"
+    Add-IscsiVirtualDiskTargetMapping -ComputerName localhost -TargetName Target1 -Path ramdisk:RAMDISK1.vhdx -Lun 1
+
+    echo "Connecting to iSCSI"
+    $ip = (Get-NetIPAddress -AddressFamily IPv4).ipaddress[0]
+    New-IscsiTargetPortal -TargetPortalAddress $ip
+    Get-IscsiTarget | Connect-IscsiTarget
+
+    echo "Configuring disk"
+    Get-IscsiConnection | Get-Disk | Set-Disk -IsOffline $False
+    Get-IscsiConnection | Get-Disk | Initialize-Disk -PartitionStyle MBR
+    Get-IscsiConnection | Get-Disk | New-Partition -UseMaximumSize -DriveLetter R
+    Format-Volume -DriveLetter R -NewFileSystemLabel Temp -FileSystem NTFS
+  displayName: Test
+
+- powershell: |
     Invoke-WebRequest -Uri https://go.microsoft.com/fwlink/?linkid=2026036 -OutFile adksetup.exe
     ./adksetup.exe /features OptionId.WindowsPerformanceToolkit /log adk-setup.log /ceip off /installpath "C:\Program Files (x86)\Windows Kits\10\"
     # Wait for install to complete.
@@ -39,6 +81,8 @@ steps:
     --wpr-profile=GeneralProfile.verbose
     --wpr-profile=CPU.verbose
     --wpr-output=traces/wpr-result.etl
+  env:
+    TEMP: "R:\\"
   displayName: Tox run unit tests
 
 - script:
