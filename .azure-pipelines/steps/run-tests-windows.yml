@@ -48,6 +48,13 @@ steps:
     Get-IscsiConnection | Get-Disk | Initialize-Disk -PartitionStyle MBR
     Get-IscsiConnection | Get-Disk | New-Partition -UseMaximumSize -DriveLetter R
     Format-Volume -DriveLetter R -NewFileSystemLabel Temp -FileSystem NTFS
+
+    echo "Adding permissions"
+    mkdir R:\Temp
+    $acl = Get-Acl "R:\Temp"
+    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule("Everyone", "FullControl", "ContainerInherit,ObjectInherit", "None", "Allow")
+    $acl.AddAccessRule($rule)
+    Set-Acl "R:\Temp" $acl
   displayName: Test
 
 - powershell: |
@@ -76,25 +83,20 @@ steps:
 
 - script:
     tox -e py -- -m unit --junit-xml=junit/unit-test.xml
-    --use-wpr
-    --wpr-path="C:\Program Files (x86)\Windows Kits\10\Windows Performance Toolkit\wpr.exe"
-    --wpr-profile=GeneralProfile.verbose
-    --wpr-profile=CPU.verbose
-    --wpr-output=traces/wpr-result.etl
   env:
-    TEMP: "R:\\"
+    TEMP: "R:\\Temp"
   displayName: Tox run unit tests
 
-- script:
-    tracerpt -l traces/wpr-result.etl -export traces/providers.man
-  displayName: Generate trace provider manifest
-
-- task: PublishBuildArtifacts@1
-  displayName: 'Publish trace results'
-  inputs:
-    pathtoPublish: traces
-    artifactName: wpr-result-$(python.version)-$(python.architecture).etl
-  condition: succeededOrFailed()
+#- script:
+#    tracerpt -l traces/wpr-result.etl -export traces/providers.man
+#  displayName: Generate trace provider manifest
+#
+#- task: PublishBuildArtifacts@1
+#  displayName: 'Publish trace results'
+#  inputs:
+#    pathtoPublish: traces
+#    artifactName: wpr-result-$(python.version)-$(python.architecture).etl
+#  condition: succeededOrFailed()
 
 - ${{ if eq(parameters.runIntegrationTests, 'true') }}:
   - powershell: |
@@ -105,9 +107,7 @@ steps:
 
       # Shorten paths to get under MAX_PATH or else integration tests will fail
       # https://bugs.python.org/issue18199
-      subst T: $env:TEMP
-      $env:TEMP = "T:\"
-      $env:TMP = "T:\"
+      $env:TEMP = "R:\Temp"
 
       tox -e py -- -m integration -n 3 --duration=5 --junit-xml=junit/integration-test.xml
     displayName: Tox run integration tests
