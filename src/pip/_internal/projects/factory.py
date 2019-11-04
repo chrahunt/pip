@@ -10,6 +10,7 @@ from pip._internal.projects.config import ProjectConfig
 from pip._internal.projects.project import Project
 from pip._internal.projects.projects import ProjectContext
 from pip._internal.projects.registry import ProjectTypeRegistry, all_projects
+from pip._internal.projects.services import ProjectServices
 from pip._internal.projects.traits import (
     archive,
     directory,
@@ -21,7 +22,6 @@ from pip._internal.projects.traits import (
     vcs,
     wheel,
 )
-from pip._internal.projects.services import ProjectServices
 from pip._internal.utils.filetypes import ARCHIVE_EXTENSIONS
 
 

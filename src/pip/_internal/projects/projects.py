@@ -41,18 +41,19 @@ Classes should take only simple types, to ease testing.
 import glob
 import os
 import sys
-from contextlib import contextmanager
 from collections import namedtuple
+from contextlib import contextmanager
 
 from pip._vendor import six
-from pip._vendor.pep517.wrappers import HookMissing, Pep517HookCaller
 from pip._vendor.packaging.requirements import Requirement
+from pip._vendor.pep517.wrappers import HookMissing, Pep517HookCaller
 
 from pip._internal.build_env import NoOpBuildEnvironment
 from pip._internal.download import unpack_file_url
 from pip._internal.models.link import Link
-from pip._internal.operations.generate_metadata import _generate_metadata_legacy
-from pip._internal.projects.base import BaseProject
+from pip._internal.operations.generate_metadata import (
+    _generate_metadata_legacy,
+)
 from pip._internal.projects.context import ProjectContext, ProjectWithContext
 from pip._internal.projects.registry import register
 from pip._internal.projects.traits import (
@@ -75,7 +76,7 @@ from pip._internal.utils.temp_dir import TempDirectory
 from pip._internal.utils.typing import MYPY_CHECK_RUNNING
 from pip._internal.utils.ui import open_spinner
 from pip._internal.utils.urls import path_to_url
-from pip._internal.wheel import Wheel, move_wheel_files, legacy_wheel_build
+from pip._internal.wheel import Wheel, legacy_wheel_build, move_wheel_files
 
 if MYPY_CHECK_RUNNING:
     from typing import (
@@ -309,7 +310,7 @@ class LocalLegacyProject(ProjectWithContext):
 
 class LocalLegacyNonWheelProject(ProjectWithContext):
     def __init__(self, ctx, source_directory, metadata_directory):
-        # type: (ProjectContext, str, str)
+        # type: (ProjectContext, str, str) -> None
         super(LocalLegacyNonWheelProject, self).__init__(ctx)
         self._source_directory = source_directory
         self._metadata_directory = metadata_directory
@@ -384,8 +385,10 @@ class LocalModernProject(ProjectWithContext):
         metadata_dir = TempDirectory(kind="modern-metadata")
 
         try:
-            distinfo_dir = self._pep517_backend.prepare_metadata_for_build_wheel(
-                metadata_dir
+            distinfo_dir = (
+                self._pep517_backend.prepare_metadata_for_build_wheel(
+                    metadata_dir
+                )
             )
         except HookMissing:
             # XXX: May be cleaner to do this in 'prepare'
@@ -412,6 +415,7 @@ class LocalModernProject(ProjectWithContext):
 class LocalModernProjectWithMetadata(ProjectWithContext):
     def __init__(self, ctx, metadata_dir):
         super().__init__(ctx)
+
 
 @register
 class LocalNamedVcs(ProjectWithContext):
@@ -440,15 +444,21 @@ class LocalNonEditableDirectory(ProjectWithContext):
         self._source_directory = source_directory
 
     @classmethod
-    def from_req(cls, ctx, req):
-        # type: (ProjectContext, ParsedRequirement) -> LocalNonEditableDirectory
+    def from_req(
+        cls,
+        ctx,  # type: ProjectContext
+        req,  # type: ParsedRequirement
+    ):
+        # type: (...) -> LocalNonEditableDirectory
         return cls(ctx, req.parts.link)
 
     def prepare(self):
         # type: () -> UnpackedSources
         temp_dir = TempDirectory(kind="unpack")
         unpack_file_url(self._source_directory, temp_dir.path)
-        return UnpackedSources(self, temp_dir.path, str(self._source_directory))
+        return UnpackedSources(
+            self, temp_dir.path, str(self._source_directory)
+        )
 
 
 class LocalSdist(ProjectWithContext):
@@ -578,6 +588,7 @@ class RemoteEditableNamedVcs(ProjectWithContext):
         #  1. Check whether this is already present locally
         #  2. Download with applicable vcs if not
         raise NotImplementedError('TODO')
+
 
 @register
 class RemoteNamedVcs(ProjectWithContext):

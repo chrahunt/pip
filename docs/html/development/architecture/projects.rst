@@ -58,4 +58,3 @@ The preparation should be transparent to the actual code that is using the proje
 wrap projects in a ``projects.proxy.ProxyProject`` which provides the same interface as
 a normal project but then internally will prepare the project if the requested information
 is not available from the project in its current form.
-

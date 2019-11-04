@@ -1,17 +1,9 @@
-from mock import Mock
-
 import pytest
-
+from mock import Mock
 
 from pip._internal.models.requirement import parse_requirement
 from pip._internal.projects.factory import ProjectFactory
-from pip._internal.projects.projects import (
-    LocalNonEditableDirectory,
-)
-from pip._internal.req.constructors import (
-    parse_req_from_editable,
-    parse_req_from_line,
-)
+from pip._internal.projects.projects import LocalNonEditableDirectory
 
 
 def create_parsed_requirement(src):

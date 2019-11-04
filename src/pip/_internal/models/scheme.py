@@ -1,6 +1,7 @@
 """
 For types associated with installation schemes.
 
+<<<<<<< HEAD
 For a general overview of available schemes and their context, see
 https://docs.python.org/3/install/index.html#alternate-installation.
 """
@@ -23,3 +24,15 @@ class Scheme(object):
         self.headers = headers
         self.scripts = scripts
         self.data = data
+=======
+if MYPY_CHECK_RUNNING:
+    from mypy_extensions import TypedDict
+
+    Scheme = TypedDict('Scheme', {
+        'purelib': str,
+        'platlib': str,
+        'headers': str,
+        'scripts': str,
+        'data': str,
+    })
+>>>>>>> wip

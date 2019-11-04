@@ -19,20 +19,6 @@ if MYPY_CHECK_RUNNING:
 logger = logging.getLogger(__name__)
 
 
-def get_metadata_generator(install_req):
-    # type: (InstallRequirement) -> Callable[[InstallRequirement], str]
-    """Return a callable metadata generator for this InstallRequirement.
-
-    A metadata generator takes an InstallRequirement (install_req) as an input,
-    generates metadata via the appropriate process for that install_req and
-    returns the generated metadata directory.
-    """
-    if not install_req.use_pep517:
-        return _generate_metadata_legacy_from_install_req
-
-    return _generate_metadata
-
-
 def _find_egg_info(source_directory, is_editable):
     # type: (str, bool) -> str
     """Find an .egg-info in `source_directory`, based on `is_editable`.
@@ -92,25 +78,37 @@ def _find_egg_info(source_directory, is_editable):
     return os.path.join(base, filenames[0])
 
 
-def _generate_metadata_legacy_from_install_req(install_req):
+def generate_metadata(install_req):
     # type: (InstallRequirement) -> str
+<<<<<<< HEAD
     """Generate metadata using setup.py-based defacto mechanisms.ArithmeticError
 
     Returns the generated metadata directory.
     """
     assert install_req.unpacked_source_directory
+=======
+    return _generate_metadata_legacy(
+        install_req.name,
+        install_req.link,
+        install_req.setup_py_path,
+        install_req.isolated,
+        install_req.editable,
+        install_req.unpacked_source_directory,
+        install_req.build_env,
+    )
+>>>>>>> wip
 
 
 def _generate_metadata_legacy(
     name,  # type: str
-    link,
-    setup_py_path,
-    isolated,
-    editable,
-    source_directory,
-    build_env,
+    link,  # type: Link
+    setup_py_path,  # type: str
+    isolated,  # type: bool
+    editable,  # type: bool
+    source_directory,  # type: str
+    build_env,  # type: BuildEnvironment
 ):
-    # type: (InstallRequirement) -> str
+    # type: (...) -> str
     req_details_str = name or "from {}".format(link)
     logger.debug(
         'Running setup.py (path:%s) egg_info for package %s',
@@ -121,7 +119,6 @@ def _generate_metadata_legacy(
     # For non-editable installs, don't put the .egg-info files at the root,
     # to avoid confusion due to the source code being considered an installed
     # egg.
-    egg_base_option = []  # type: List[str]
     if not editable:
         egg_info_dir = os.path.join(
             source_directory, 'pip-egg-info',

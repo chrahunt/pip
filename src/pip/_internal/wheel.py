@@ -42,6 +42,7 @@ if MYPY_CHECK_RUNNING:
 
     from pip._internal.models.scheme import Scheme
     from pip._internal.pep425tags import Pep425Tag
+    from pip._internal.utils.ui import SpinnerInterface
 
     InstalledCSVRow = Tuple[str, ...]
 

@@ -20,7 +20,7 @@ if MYPY_CHECK_RUNNING:
         @classmethod
         def from_req(cls, req):
             # type: (ParsedRequirement) -> BaseProject
-            ...
+            return BaseProject()
 
 
 _projects = []  # type: List[Type[ConstructibleProject]]

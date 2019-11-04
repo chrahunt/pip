@@ -21,7 +21,7 @@ class LegacyBuildHelper(object):
 def legacy_build_wheel(
     name,  # type: str
     source_dir,
-    build_env,  # type: BuildEnvironment
+    build_env,
     global_options,
     setup_py_path,
     build_options,
